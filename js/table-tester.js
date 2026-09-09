@@ -260,38 +260,128 @@
     });
   }
 
+  // Universal helper to extract table structures from any arbitrary JSON format
+  function extractTablesFromAny(jsonData) {
+    if (!jsonData) return [];
+    const tables = [];
+
+    // Case 1: JSON object is directly a table (e.g. { type: "table", coords: [...], cells: [...] })
+    if (typeof jsonData === 'object' && jsonData !== null) {
+      const isDirectTable = jsonData.type === 'table' || 
+                            jsonData.category === 'Table' || 
+                            jsonData.is_table === true ||
+                            Array.isArray(jsonData.cells) || 
+                            Array.isArray(jsonData.table_cells) ||
+                            Array.isArray(jsonData.cell_bboxes) ||
+                            Array.isArray(jsonData.rows) ||
+                            Array.isArray(jsonData.matrix);
+
+      if (isDirectTable && (Array.isArray(jsonData.cells) || Array.isArray(jsonData.table_cells) || Array.isArray(jsonData.rows) || Array.isArray(jsonData.words))) {
+        tables.push({
+          id: jsonData.id || jsonData.table_id || 'table-1',
+          page: jsonData.page || 1,
+          type: (jsonData.forced_type && jsonData.forced_type !== 'table') ? jsonData.forced_type : (jsonData.type && jsonData.type !== 'table' ? jsonData.type : 'A_MATRIX'),
+          coords: jsonData.coords || jsonData.bbox || [50, 50, 600, 300],
+          cells: jsonData.cells || jsonData.table_cells || jsonData.cell_bboxes || [],
+          words: jsonData.words || []
+        });
+        return tables;
+      }
+    }
+
+    // Case 2: JSON is an array of items or array of tables
+    const list = Array.isArray(jsonData) ? jsonData : (jsonData.tables || jsonData.table_list || jsonData.elements || jsonData.items || jsonData.results || jsonData.blocks || jsonData.sentences || []);
+
+    if (Array.isArray(list) && list.length > 0) {
+      list.forEach((item, idx) => {
+        if (!item || typeof item !== 'object') return;
+        const isTbl = item.type === 'table' || item.category === 'Table' || item.is_table === true || Array.isArray(item.cells) || Array.isArray(item.table_cells) || Array.isArray(item.rows);
+        if (isTbl) {
+          tables.push({
+            id: item.id || item.table_id || `table-${idx + 1}`,
+            page: item.page || 1,
+            type: (item.forced_type && item.forced_type !== 'table') ? item.forced_type : (item.type && item.type !== 'table' ? item.type : 'A_MATRIX'),
+            coords: item.coords || item.bbox || [50, 50, 600, 300],
+            cells: item.cells || item.table_cells || item.cell_bboxes || [],
+            words: item.words || []
+          });
+        }
+      });
+      if (tables.length > 0) return tables;
+    }
+
+    // Case 3: Recursive search through pages or container objects
+    if (typeof jsonData === 'object' && jsonData !== null) {
+      for (const k of Object.keys(jsonData)) {
+        if (typeof jsonData[k] === 'object' && jsonData[k] !== null) {
+          const sub = extractTablesFromAny(jsonData[k]);
+          if (sub.length > 0) tables.push(...sub);
+        }
+      }
+    }
+
+    return tables;
+  }
+
   // =========================================================================
   // Sync Data with Main Editor (index.html)
   // =========================================================================
   function syncFromMainEditor() {
     try {
       const rawStored = localStorage.getItem('directly_detect_bbox_shared_data');
-      if (!rawStored) return;
+      if (!rawStored) {
+        // Fallback check other storage keys
+        const fallbackJson = localStorage.getItem('directly_detect_bbox_raw_json');
+        if (fallbackJson) {
+          try {
+            const parsed = JSON.parse(fallbackJson);
+            const extTables = extractTablesFromAny(parsed);
+            if (extTables.length > 0) {
+              populateUserTables(extTables, 'Aktif JSON');
+              return;
+            }
+          } catch (e) {}
+        }
+        return;
+      }
 
       const parsedData = JSON.parse(rawStored);
-      if (parsedData && Array.isArray(parsedData.detectedTables) && parsedData.detectedTables.length > 0) {
-        userUploadedTables = parsedData.detectedTables.map((t, idx) => ({
-          id: `user-tbl-${t.id || idx + 1}`,
-          name: `${parsedData.jsonFileName ? parsedData.jsonFileName.replace('.json', '') : 'Belge Tablosu'} #${idx + 1} (Sayfa ${t.page || 1})`,
-          type: t.type || 'A_MATRIX',
-          typeName: TableClassifier.TYPE_NAMES[t.type] || t.type,
-          desc: `${t.cells ? t.cells.length : 0} Hücre • Sayfa ${t.page || 1} • Ana Editörden Aktarıldı`,
-          isUserUploaded: true,
-          data: t
-        }));
+      let detected = Array.isArray(parsedData.detectedTables) ? parsedData.detectedTables : [];
 
-        renderUserUploadedTables();
+      // If detectedTables is empty, try extracting from rawJsonData
+      if (detected.length === 0 && parsedData.rawJsonData) {
+        detected = extractTablesFromAny(parsedData.rawJsonData);
+      }
 
-        // If currently viewing a sample, switch to the first uploaded user table
-        if (!activeSample || !activeSample.isUserUploaded) {
-          activeSample = userUploadedTables[0];
-          renderSampleList();
-          renderUserUploadedTables();
-          loadTable(activeSample.data, activeSample.type, activeSample.name);
-        }
+      if (detected.length > 0) {
+        populateUserTables(detected, parsedData.jsonFileName || 'Belge');
       }
     } catch (err) {
-      console.warn('Sync error:', err);
+      console.warn('[Sync] Sync error:', err);
+    }
+  }
+
+  function populateUserTables(tablesList, sourceLabel = 'Belge') {
+    if (!tablesList || tablesList.length === 0) return;
+
+    userUploadedTables = tablesList.map((t, idx) => ({
+      id: `user-tbl-${t.id || idx + 1}`,
+      name: `${sourceLabel.replace('.json', '')} Tablosu #${idx + 1} (Sayfa ${t.page || 1})`,
+      type: (t.type && t.type !== 'table') ? t.type : (t.forced_type && t.forced_type !== 'table' ? t.forced_type : 'A_MATRIX'),
+      typeName: TableClassifier.TYPE_NAMES[t.type] || t.type || 'Tablo',
+      desc: `${t.cells ? t.cells.length : 0} Hücre • Sayfa ${t.page || 1} • Ana Editörden Aktarıldı`,
+      isUserUploaded: true,
+      data: t
+    }));
+
+    renderUserUploadedTables();
+
+    // Automatically switch to the first uploaded user table
+    if (userUploadedTables.length > 0) {
+      activeSample = userUploadedTables[0];
+      renderSampleList();
+      renderUserUploadedTables();
+      loadTable(activeSample.data, activeSample.type, activeSample.name);
     }
   }
 
@@ -299,14 +389,14 @@
   if ('BroadcastChannel' in window) {
     const bc = new BroadcastChannel('directly_detect_bbox_sync');
     bc.onmessage = (ev) => {
-      if (ev.data && Array.isArray(ev.data.detectedTables)) {
+      if (ev.data) {
         syncFromMainEditor();
       }
     };
   }
 
   window.addEventListener('storage', (e) => {
-    if (e.key === 'directly_detect_bbox_shared_data') {
+    if (e.key === 'directly_detect_bbox_shared_data' || e.key === 'directly_detect_bbox_raw_json') {
       syncFromMainEditor();
     }
   });
@@ -666,76 +756,47 @@
   }
 
   // =========================================================================
-  // File Upload Handlers (Direct JSON and PDF in Lab)
+  // File Upload Handlers (Direct JSON and PDF in Lab & Drag-and-Drop)
   // =========================================================================
+  async function handleJsonFile(file) {
+    if (!file) return;
+    try {
+      const text = await readFileAsText(file);
+      let parsed = null;
+      try {
+        parsed = JSON.parse(text);
+      } catch {
+        parsed = JSON.parse(`[${text.replace(/^,/, '').replace(/,$/, '').trim()}]`);
+      }
+
+      const tables = extractTablesFromAny(parsed);
+
+      if (tables.length > 0) {
+        populateUserTables(tables, file.name || 'Yüklenen Belge');
+      } else {
+        const singleObj = {
+          id: 'uploaded-single-table',
+          name: (file.name || 'Yüklenen Tablo').replace('.json', ''),
+          type: (parsed && parsed.type && parsed.type !== 'table') ? parsed.type : 'A_MATRIX',
+          typeName: TableClassifier.TYPE_NAMES[parsed.type] || 'Yüklenen Tablo',
+          desc: 'Yüklenen JSON dosyası.',
+          cells: (parsed && (parsed.cells || parsed.table_cells)) ? (parsed.cells || parsed.table_cells) : []
+        };
+        populateUserTables([singleObj], file.name || 'Yüklenen Tablo');
+      }
+
+      const jsonLabel = document.getElementById('lab-json-label');
+      if (jsonLabel) jsonLabel.textContent = file.name;
+    } catch (err) {
+      alert('JSON yükleme hatası: ' + err.message);
+    }
+  }
+
   if (labJsonBtn && labJsonInput) {
     labJsonBtn.addEventListener('click', () => labJsonInput.click());
     labJsonInput.addEventListener('change', async (e) => {
       const file = e.target.files[0];
-      if (!file) return;
-
-      try {
-        const text = await readFileAsText(file);
-        let parsed = null;
-        try {
-          parsed = JSON.parse(text);
-        } catch {
-          parsed = JSON.parse(`[${text.replace(/^,/, '').replace(/,$/, '').trim()}]`);
-        }
-
-        const bboxes = (typeof BBoxParser !== 'undefined') ? BBoxParser.parse(parsed) : [];
-        const tables = [];
-
-        // Extract raw table objects from JSON
-        const rawTables = (typeof BBoxParser !== 'undefined') ? BBoxParser._extractRawTableObjects(parsed) : [];
-        if (rawTables.length > 0) {
-          rawTables.forEach((t, idx) => {
-            tables.push({
-              id: t.id || `uploaded-tbl-${idx + 1}`,
-              page: t.page || 1,
-              type: t.type || 'table',
-              cells: t.cells || [],
-              words: t.words || [],
-              coords: t.coords || t.bbox || [50, 50, 500, 300]
-            });
-          });
-        }
-
-        if (tables.length > 0) {
-          userUploadedTables = tables.map((t, idx) => ({
-            id: `user-tbl-${idx + 1}`,
-            name: `${file.name.replace('.json', '')} #${idx + 1}`,
-            type: t.type || 'A_MATRIX',
-            typeName: TableClassifier.TYPE_NAMES[t.type] || t.type,
-            desc: `${t.cells ? t.cells.length : 0} Hücre • Yüklenen JSON`,
-            isUserUploaded: true,
-            data: t
-          }));
-
-          renderUserUploadedTables();
-          activeSample = userUploadedTables[0];
-          renderSampleList();
-          loadTable(activeSample.data, activeSample.type, activeSample.name);
-        } else {
-          // Wrap entire JSON if it's a single table object
-          const singleObj = {
-            id: 'uploaded-single-table',
-            name: file.name.replace('.json', ''),
-            type: parsed.type || parsed.forced_type || 'A_MATRIX',
-            typeName: TableClassifier.TYPE_NAMES[parsed.type] || 'Yüklenen Tablo',
-            desc: 'Yüklenen JSON dosyası.',
-            isUserUploaded: true,
-            data: parsed
-          };
-          userUploadedTables = [singleObj];
-          renderUserUploadedTables();
-          activeSample = singleObj;
-          renderSampleList();
-          loadTable(singleObj.data, singleObj.type, singleObj.name);
-        }
-      } catch (err) {
-        alert('JSON yükleme hatası: ' + err.message);
-      }
+      if (file) await handleJsonFile(file);
     });
   }
 
@@ -750,13 +811,29 @@
     });
   }
 
+  // Drag & Drop anywhere on Lab Window
+  window.addEventListener('dragover', (e) => { e.preventDefault(); });
+  window.addEventListener('drop', async (e) => {
+    e.preventDefault();
+    const files = e.dataTransfer ? e.dataTransfer.files : [];
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      if (file.name.endsWith('.json')) {
+        await handleJsonFile(file);
+      } else if (file.name.endsWith('.pdf')) {
+        const label = document.getElementById('lab-pdf-label');
+        if (label) label.textContent = file.name;
+      }
+    }
+  });
+
   if (labSyncBtn) {
     labSyncBtn.addEventListener('click', () => {
       syncFromMainEditor();
       if (userUploadedTables.length > 0) {
-        alert(`Ana editörden ${userUploadedTables.length} adet tablo başarıyla çekildi!`);
+        alert(`Ana editörden ${userUploadedTables.length} adet tablo başarıyla çekildi ve listelendi!`);
       } else {
-        alert('Ana editörde henüz yüklenmiş bir tablo bulunamadı. Lütfen önce ana arayüzde PDF ve JSON yükleyin.');
+        alert('Ana editörde henüz yüklenmiş bir tablo bulunamadı. Lütfen ana sayfada JSON yükleyiniz veya bu sayfada "JSON Yükle" butonunu kullanınız.');
       }
     });
   }
@@ -826,19 +903,21 @@
 
     try {
       const parsed = JSON.parse(rawVal);
-      const customTableObj = {
-        id: 'custom-user-table',
-        name: parsed.name || parsed.table_id || 'Özel Yapıştırılan Tablo',
-        type: parsed.forced_type || parsed.type || 'A_MATRIX',
-        typeName: TableClassifier.TYPE_NAMES[parsed.forced_type || 'A_MATRIX'] || 'Özel Tablo',
-        desc: 'Kullanıcı tarafından yapıştırılan özel JSON tablosu.',
-        data: parsed
-      };
+      const tables = extractTablesFromAny(parsed);
 
-      SAMPLE_TABLES.unshift(customTableObj);
-      activeSample = customTableObj;
-      renderSampleList();
-      loadTable(customTableObj.data, customTableObj.type, customTableObj.name);
+      if (tables.length > 0) {
+        populateUserTables(tables, 'Özel JSON');
+      } else {
+        const customTableObj = {
+          id: 'custom-user-table',
+          name: parsed.name || parsed.table_id || 'Özel Yapıştırılan Tablo',
+          type: (parsed.forced_type && parsed.forced_type !== 'table') ? parsed.forced_type : (parsed.type && parsed.type !== 'table' ? parsed.type : 'A_MATRIX'),
+          typeName: TableClassifier.TYPE_NAMES[parsed.forced_type || 'A_MATRIX'] || 'Özel Tablo',
+          desc: 'Kullanıcı tarafından yapıştırılan özel JSON tablosu.',
+          cells: parsed.cells || parsed.table_cells || []
+        };
+        populateUserTables([customTableObj], 'Özel Tablo');
+      }
 
       customModal.style.display = 'none';
     } catch (err) {
@@ -850,9 +929,12 @@
     setTimeout(renderTrajectoryLines, 100);
   });
 
-  // Initial Load & Automatic Sync from Main Editor
+  // Initial Load & Automatic Multi-interval Sync from Main Editor
   renderSampleList();
   syncFromMainEditor();
+
+  setTimeout(syncFromMainEditor, 150);
+  setTimeout(syncFromMainEditor, 500);
 
   if (!activeSample || !activeSample.isUserUploaded) {
     loadTable(activeSample.data, activeSample.type, activeSample.name);
