@@ -1047,14 +1047,21 @@ class TableClassifier {
       for (const c of dataCells) {
         const tOrder = tableOrderCounter++;
         let fullText = c.text;
-        if (c.row === 0) {
+        if (c.row < firstDataRow) {
           fullText = colHeaders.get(c.col) || c.text;
         } else if (c.col === 0) {
           fullText = rowHeaders.get(c.row) || c.text;
         } else {
-          const rowInfo = rowHeaders.get(c.row) || `${c.row + 1}`;
-          const colInfo = colHeaders.get(c.col) || `${c.col + 1}`;
-          fullText = `Satır ${rowInfo}, Sütun ${colInfo}, Değer ${c.text}`;
+          const rowInfo = (rowHeaders.get(c.row) || '').trim();
+          const colInfo = (colHeaders.get(c.col) || '').trim();
+          const cellVal = (c.text || '').trim();
+
+          const parts = [];
+          if (rowInfo && rowInfo !== cellVal) parts.push(rowInfo);
+          if (colInfo && colInfo !== cellVal && colInfo !== rowInfo) parts.push(colInfo);
+          if (cellVal) parts.push(cellVal);
+
+          fullText = parts.length > 0 ? parts.join(' ').trim() : cellVal;
         }
 
         const cellItems = this._expandCellIntoSentences(c, pageNum, currentSentenceNum, tOrder, tableId, tableType, tableIndex, fullText);
@@ -1097,17 +1104,24 @@ class TableClassifier {
 
       let fullText = c.text;
       if (tableType === this.TYPES.A_MATRIX) {
-        if (c.row === 0) {
+        if (c.row < firstDataRow) {
           // Column header cell in top row
           fullText = colHeaders.get(c.col) || c.text;
         } else if (c.col === 0) {
           // Row header cell in first column
           fullText = rowHeaders.get(c.row) || c.text;
         } else {
-          // Data cell: Satır [Satır Bilgisi], Sütun [Sütun Bilgisi], Değer [Hücre Değeri]
-          const rowInfo = rowHeaders.get(c.row) || `${c.row + 1}`;
-          const colInfo = colHeaders.get(c.col) || `${c.col + 1}`;
-          fullText = `Satır ${rowInfo}, Sütun ${colInfo}, Değer ${c.text}`;
+          // Data cell: [Satır Değeri] [Sütun Değeri] [Hücre Değeri]
+          const rowInfo = (rowHeaders.get(c.row) || '').trim();
+          const colInfo = (colHeaders.get(c.col) || '').trim();
+          const cellVal = (c.text || '').trim();
+
+          const parts = [];
+          if (rowInfo && rowInfo !== cellVal) parts.push(rowInfo);
+          if (colInfo && colInfo !== cellVal && colInfo !== rowInfo) parts.push(colInfo);
+          if (cellVal) parts.push(cellVal);
+
+          fullText = parts.length > 0 ? parts.join(' ').trim() : cellVal;
         }
       }
 

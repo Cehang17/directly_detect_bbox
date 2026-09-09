@@ -846,6 +846,8 @@ function initApp() {
 
     if (siblingLines.length > 1) {
       fullText = siblingLines.map(l => l.text).join(' ').trim();
+    } else if (bboxItem.table_type === 'A_MATRIX' || bboxItem.table_type === 'F_HYBRID_NOTE') {
+      fullText = bboxItem.fullSentenceText || bboxItem.text || '';
     } else {
       fullText = bboxItem.text || bboxItem.fullSentenceText || '';
     }
