@@ -975,12 +975,11 @@ class TableClassifier {
       const sortedRows = Array.from(rowsMap.keys()).sort((a, b) => a - b);
       for (const rowIdx of sortedRows) {
         const rowCells = rowsMap.get(rowIdx).sort((a, b) => a.col - b.col);
-        const rowText = rowCells.map(rc => (rc.text || '').trim()).filter(Boolean).join(' ');
 
         for (const c of rowCells) {
           const tOrder = tableOrderCounter++;
-          const fullText = rowText || c.text;
-          const cellItems = this._expandCellIntoSentences(c, pageNum, currentSentenceNum, tOrder, tableId, tableType, tableIndex, fullText);
+          const cellText = (c.text || '').trim();
+          const cellItems = this._expandCellIntoSentences(c, pageNum, currentSentenceNum, tOrder, tableId, tableType, tableIndex, cellText);
           cellItems.forEach(it => items.push(it));
           if (cellItems.length > 0) {
             currentSentenceNum = Math.max(...cellItems.map(it => it.sentence_id)) + 1;
@@ -1003,12 +1002,11 @@ class TableClassifier {
       const sortedRows = Array.from(rowsMap.keys()).sort((a, b) => a - b);
       for (const rowIdx of sortedRows) {
         const rowCells = rowsMap.get(rowIdx).sort((a, b) => a.col - b.col);
-        const rowText = rowCells.map(rc => (rc.text || '').trim()).filter(Boolean).join(' ');
 
         for (const c of rowCells) {
           const tOrder = tableOrderCounter++;
-          const fullText = rowText || c.text;
-          const cellItems = this._expandCellIntoSentences(c, pageNum, currentSentenceNum, tOrder, tableId, tableType, tableIndex, fullText);
+          const cellText = (c.text || '').trim();
+          const cellItems = this._expandCellIntoSentences(c, pageNum, currentSentenceNum, tOrder, tableId, tableType, tableIndex, cellText);
           cellItems.forEach(it => items.push(it));
           if (cellItems.length > 0) {
             currentSentenceNum = Math.max(...cellItems.map(it => it.sentence_id)) + 1;
