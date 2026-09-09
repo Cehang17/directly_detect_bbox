@@ -560,7 +560,7 @@ class TableClassifier {
     sortedByY.forEach(c => {
       const box = getCoords(c);
       const midY = (box[1] + box[3]) / 2;
-      const h = box[3] - box[1];
+      const h = Math.max(box[3] - box[1], 8);
 
       const match = rowGroups.find(rg => {
         const vOverlap = Math.max(0, Math.min(rg.maxY1, box[3]) - Math.max(rg.minY0, box[1]));
@@ -586,25 +586,99 @@ class TableClassifier {
 
     rowGroups.sort((a, b) => a.minY0 - b.minY0);
 
-    // 2. In each row, sort cells strictly left to right
+    // 2. Discover True Global Physical Column Bands (X-Cuts) across the entire table
+    const tblWidth = (tableBox && Array.isArray(tableBox) && tableBox.length >= 4)
+      ? (tableBox[2] - tableBox[0])
+      : Math.max(...validCells.map(c => getCoords(c)[2])) - Math.min(...validCells.map(c => getCoords(c)[0]));
+
+    // Find non-spanning base cells to build accurate physical column anchors
+    let baseCells = validCells.filter(c => {
+      const box = getCoords(c);
+      return (box[2] - box[0]) < Math.max(tblWidth * 0.45, 120);
+    });
+    if (baseCells.length === 0) baseCells = validCells;
+
+    const colClusters = [];
+    const sortedByX = [...baseCells].sort((a, b) => getCoords(a)[0] - getCoords(b)[0]);
+    sortedByX.forEach(c => {
+      const [x0, y0, x1, y1] = getCoords(c);
+      const midX = (x0 + x1) / 2;
+      const w = Math.max(x1 - x0, 10);
+      const match = colClusters.find(cl => {
+        const xOverlap = Math.max(0, Math.min(cl.maxX1, x1) - Math.max(cl.minX0, x0));
+        const minColW = Math.min(cl.maxX1 - cl.minX0, w);
+        return (minColW > 0 && xOverlap / minColW > 0.35) || Math.abs(cl.midX - midX) < Math.max(22, w * 0.4);
+      });
+      if (match) {
+        match.cells.push(c);
+        match.minX0 = Math.min(match.minX0, x0);
+        match.maxX1 = Math.max(match.maxX1, x1);
+        match.midX = (match.minX0 + match.maxX1) / 2;
+      } else {
+        colClusters.push({ minX0: x0, maxX1: x1, midX, cells: [c] });
+      }
+    });
+    colClusters.sort((a, b) => a.minX0 - b.minX0);
+
+    // 3. Snap every cell in every row to its true physical column index and calculate accurate colspan
     const structuredCells = [];
     rowGroups.forEach((rg, rIdx) => {
-      rg.cells.sort((a, b) => {
-        const boxA = getCoords(a);
-        const boxB = getCoords(b);
-        return boxA[0] - boxB[0];
-      });
+      rg.cells.sort((a, b) => getCoords(a)[0] - getCoords(b)[0]);
 
-      rg.cells.forEach((c, cIdx) => {
+      rg.cells.forEach((c) => {
         const coords = getCoords(c);
+        const [cx0, cy0, cx1, cy1] = coords;
+        const cMidX = (cx0 + cx1) / 2;
+        const cWidth = cx1 - cx0;
+
+        let startCol = 0;
+        let endCol = 0;
+
+        if (colClusters.length <= 1) {
+          startCol = 0;
+          endCol = 0;
+        } else if (cWidth > tblWidth * 0.60 && colClusters.length >= 2) {
+          // Top banner or wide note spanning across table
+          startCol = 0;
+          endCol = colClusters.length - 1;
+        } else {
+          const coveredCols = [];
+          colClusters.forEach((cl, clIdx) => {
+            const xOverlap = Math.max(0, Math.min(cl.maxX1, cx1) - Math.max(cl.minX0, cx0));
+            const colW = cl.maxX1 - cl.minX0;
+            if (xOverlap > 10 || (colW > 0 && xOverlap / colW > 0.25) || (cMidX >= cl.minX0 - 6 && cMidX <= cl.maxX1 + 6)) {
+              coveredCols.push(clIdx);
+            }
+          });
+
+          if (coveredCols.length > 0) {
+            startCol = Math.min(...coveredCols);
+            endCol = Math.max(...coveredCols);
+          } else {
+            let closestIdx = 0;
+            let closestDist = Infinity;
+            colClusters.forEach((cl, clIdx) => {
+              const dist = Math.abs(cl.midX - cMidX);
+              if (dist < closestDist) {
+                closestDist = dist;
+                closestIdx = clIdx;
+              }
+            });
+            startCol = closestIdx;
+            endCol = closestIdx;
+          }
+        }
+
+        const assignedColspan = Math.max(c.colspan || 1, endCol - startCol + 1);
+
         structuredCells.push({
           ...c,
           id: c.id || `cell-${structuredCells.length + 1}`,
           rawCoords: coords,
           row: rIdx,
-          col: cIdx,
+          col: startCol,
           rowspan: c.rowspan || 1,
-          colspan: c.colspan || 1
+          colspan: assignedColspan
         });
       });
     });
@@ -613,7 +687,7 @@ class TableClassifier {
 
     return {
       rows: rowIntervals,
-      cols: [],
+      cols: colClusters.map((cl, idx) => ({ col_idx: idx, x0: cl.minX0, x1: cl.maxX1 })),
       cells: structuredCells
     };
   }
