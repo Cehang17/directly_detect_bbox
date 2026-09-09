@@ -25,19 +25,67 @@ class BBoxParser {
       }
     });
 
-    const parsedList = rawItems.map((item, index) => {
+    const Classifier = (typeof TableClassifier !== 'undefined')
+      ? TableClassifier
+      : (typeof require !== 'undefined' ? (() => { try { return require('./table-classifier.js'); } catch(e) { return null; } })() : null);
+
+    let tableIndexCounter = 1;
+    const parsedList = [];
+
+    rawItems.forEach((item, index) => {
       const page = this._findPageInObject(item, 1);
       const text = this._findTextInObject(item, index + 1);
       const rawBox = this._findBoxInObject(item);
       const confidence = this._findConfidenceInObject(item);
       const category = this._findCategoryInObject(item);
 
+      // Check if item is a Table block or table container
+      const isTable = this._isTableObject(item) || /table|tablo|grid|matrix/i.test(String(category || item.type || item.label || ''));
+
+      if (isTable && Classifier && typeof Classifier.processTable === 'function' && !item.table_order_id) {
+        const tableObj = {
+          ...item,
+          bbox: rawBox,
+          text: text,
+          page: page,
+          confidence: confidence,
+          category: 'Table Cell'
+        };
+
+        const tRes = Classifier.processTable(tableObj, page, parsedList.length + 1, tableIndexCounter++);
+        if (tRes && tRes.items && tRes.items.length > 0) {
+          tRes.items.forEach(tItem => {
+            const cellBox = this._findBoxInObject(tItem) || tItem.rawCoords;
+            const parsed = this._extractBoxNumbers(cellBox, manualFormat, globalMax, yOrigin);
+            parsedList.push({
+              id: tItem.id || `bbox-p${page}-t${tableIndexCounter}-${parsedList.length + 1}-${Math.random().toString(36).substr(2, 5)}`,
+              index: parsedList.length + 1,
+              id_display: parsedList.length + 1,
+              page: page,
+              text: tItem.text || text,
+              fullSentenceText: tItem.fullSentenceText || tItem.text || text,
+              confidence: tItem.confidence || confidence || 0.98,
+              category: 'Table Cell',
+              table_id: tRes.tableId,
+              table_type: tRes.tableType,
+              table_order_id: tItem.table_order_id,
+              table_order_label: tItem.table_order_label,
+              rawBox: cellBox,
+              layoutProcessed: true,
+              layout_id: tRes.tableId,
+              ...parsed
+            });
+          });
+          return;
+        }
+      }
+
       const parsed = this._extractBoxNumbers(rawBox, manualFormat, globalMax, yOrigin);
 
-      return {
-        id: item.id || `bbox-${index + 1}`,
-        index: index + 1,
-        id_display: index,
+      parsedList.push({
+        id: item.id || `bbox-p${page}-${parsedList.length + 1}-${Math.random().toString(36).substr(2, 5)}`,
+        index: parsedList.length + 1,
+        id_display: parsedList.length + 1,
         page: page,
         text: text,
         fullSentenceText: item.fullSentenceText || item.sentenceText || text || '',
@@ -46,10 +94,13 @@ class BBoxParser {
         rawBox: rawBox,
         layoutProcessed: !!(item.layoutProcessed || item.layout_id),
         layout_id: item.layout_id || null,
+        table_id: item.table_id || null,
+        table_type: item.table_type || null,
+        table_order_id: item.table_order_id !== undefined ? item.table_order_id : null,
+        table_order_label: item.table_order_label || null,
         sentence_id: item.sentence_id !== undefined ? item.sentence_id : (item.id_display !== undefined ? item.id_display : null),
-        id_display: item.id_display !== undefined ? item.id_display : (item.sentence_id !== undefined ? item.sentence_id : (index + 1)),
         ...parsed
-      };
+      });
     });
 
     // 1. Split multi-sentence paragraphs into individual sentence bboxes (1 BBox per sentence)
@@ -68,6 +119,104 @@ class BBoxParser {
 
     // 3. Apply Smart Multi-Column Reading Order Sorting
     return this.sortReadingOrder(deduplicatedList);
+  }
+
+  /**
+   * Detect if a layout or object is structurally a table or key-value form
+   */
+  static _isLayoutTableOrForm(layout) {
+    if (!layout || typeof layout !== 'object') return false;
+    if (layout.is_table === true || layout.table === true) return true;
+    if (layout.cells && layout.cells.length > 0) return true;
+    if (layout.table_cells || layout.cell_bboxes || layout.rows || layout.matrix) return true;
+
+    const lType = String(
+      layout.category || layout.type || layout.label || layout.class || layout.class_name || 
+      layout.label_type || layout.layout_label || layout.layout_type || layout.element_type || 
+      layout.tur || layout.category_name || layout.label_name || layout.tag || layout.name || ''
+    ).toLowerCase();
+
+    if (/table|tablo|tabular|matrix|grid|form_table|data_table|key_value|form/i.test(lType)) {
+      return true;
+    }
+
+    // Check words in layout
+    const words = layout.words || [];
+    if (words.length >= 4) {
+      const validWords = words.filter(w => {
+        const b = w.bbox || w.coords;
+        return Array.isArray(b) && b.length >= 4;
+      });
+
+      if (validWords.length >= 4) {
+        const sortedWords = [...validWords].sort((a, b) => {
+          const cyA = (a.bbox[1] + a.bbox[3]) / 2;
+          const cyB = (b.bbox[1] + b.bbox[3]) / 2;
+          return cyA - cyB;
+        });
+
+        const lines = [];
+        sortedWords.forEach(w => {
+          const wcy = (w.bbox[1] + w.bbox[3]) / 2;
+          const match = lines.find(l => Math.abs(l.cy - wcy) < 10);
+          if (match) {
+            match.words.push(w);
+            match.cy = match.words.reduce((sum, item) => sum + (item.bbox[1] + item.bbox[3]) / 2, 0) / match.words.length;
+          } else {
+            lines.push({ cy: wcy, words: [w] });
+          }
+        });
+
+        if (lines.length >= 2) {
+          let colonLineCount = 0;
+          let gapSplitLineCount = 0;
+
+          lines.forEach(l => {
+            l.words.sort((a, b) => a.bbox[0] - b.bbox[0]);
+            const lineText = l.words.map(w => w.word || w.text || '').join(' ').trim();
+            
+            if (lineText.includes(':') && !lineText.startsWith(':')) {
+              colonLineCount++;
+            }
+
+            for (let i = 0; i < l.words.length - 1; i++) {
+              const gap = l.words[i + 1].bbox[0] - l.words[i].bbox[2];
+              if (gap >= 22) {
+                gapSplitLineCount++;
+                break;
+              }
+            }
+          });
+
+          if ((colonLineCount >= 2 && colonLineCount / lines.length >= 0.3) ||
+              (gapSplitLineCount >= 2 && gapSplitLineCount / lines.length >= 0.4)) {
+            return true;
+          }
+        }
+      }
+    }
+
+    return false;
+  }
+
+  /**
+   * Helper to check if an arbitrary object represents a table structure
+   */
+  static _isTableObject(obj) {
+    if (!obj || typeof obj !== 'object') return false;
+    if (this._isLayoutTableOrForm(obj)) return true;
+
+    // Check if text is a Markdown table or multi-column delimited tabular structure
+    if (typeof obj.text === 'string' && obj.text.length > 10) {
+      const txt = obj.text.trim();
+      if ((txt.includes('|') && txt.split('\n').length >= 2) ||
+          (txt.includes('\t') && txt.split('\n').length >= 2) ||
+          (txt.includes('<table') && txt.includes('</table>'))) {
+        return true;
+      }
+    }
+
+    return false;
   }
 
   /**
@@ -219,7 +368,7 @@ class BBoxParser {
 
     // Keep all candidate items
     let candidates = items.filter(it => {
-      const hasText = it.text && it.text.trim().length > 0;
+      const hasText = it.text && String(it.text).trim().length > 0;
       return hasText || (it.rawCoords && it.rawCoords.some(c => c > 0));
     });
 
@@ -232,19 +381,25 @@ class BBoxParser {
       const maxX = Math.max(x0, x1);
       const minY = Math.min(y0, y1);
       const maxY = Math.max(y0, y1);
-      const w = Math.max(maxX - minX, 1);
-      const h = Math.max(maxY - minY, 1);
+      const w = Math.max(maxX - minX, 0.0001);
+      const h = Math.max(maxY - minY, 0.0001);
       const area = w * h;
       return {
         item: it,
         x0: minX, y0: minY, x1: maxX, y1: maxY,
         w, h, area,
         confidence: typeof it.confidence === 'number' ? it.confidence : 0.5,
-        textLen: (it.text || '').length,
+        textLen: String(it.text || '').length,
         isContainer: false,
         isDuplicate: false
       };
     });
+
+    // Detect if coordinate space is normalized (0..1) or pixel (0..1000+)
+    const isNorm = boxes.length > 0 && boxes.every(b => b.x1 <= 1.5 && b.y1 <= 1.5);
+    const minHeight = isNorm ? 0.001 : 6;
+    const minGap = isNorm ? 0.005 : 10;
+    const trimMargin = isNorm ? 0.001 : 2;
 
     // Step 2: Exact & High-Overlap Duplicate Suppression (IoU > 0.75 or identical text)
     for (let i = 0; i < boxes.length; i++) {
@@ -255,6 +410,11 @@ class BBoxParser {
         const boxB = boxes[j];
         if (boxB.isDuplicate) continue;
 
+        // Never suppress or delete table items
+        const isTableA = boxA.item.table_id || boxA.item.table_type || boxA.item.category === 'Table Cell' || boxA.item.category === 'Table';
+        const isTableB = boxB.item.table_id || boxB.item.table_type || boxB.item.category === 'Table Cell' || boxB.item.category === 'Table';
+        if (isTableA || isTableB) continue;
+
         const interX0 = Math.max(boxA.x0, boxB.x0);
         const interY0 = Math.max(boxA.y0, boxB.y0);
         const interX1 = Math.min(boxA.x1, boxB.x1);
@@ -263,10 +423,10 @@ class BBoxParser {
         if (interX1 > interX0 && interY1 > interY0) {
           const interArea = (interX1 - interX0) * (interY1 - interY0);
           const unionArea = boxA.area + boxB.area - interArea;
-          const iou = interArea / unionArea;
+          const iou = unionArea > 0 ? (interArea / unionArea) : 0;
 
           const sameText = boxA.item.text && boxB.item.text && 
-            (boxA.item.text.trim().toLowerCase() === boxB.item.text.trim().toLowerCase());
+            (String(boxA.item.text).trim().toLowerCase() === String(boxB.item.text).trim().toLowerCase());
 
           if (iou > 0.75 || (sameText && (interArea / Math.min(boxA.area, boxB.area) > 0.55))) {
             if (boxA.confidence >= boxB.confidence) {
@@ -285,6 +445,10 @@ class BBoxParser {
       const boxA = boxes[i];
       if (boxA.isDuplicate || boxA.isContainer) continue;
 
+      // Never suppress or delete table items
+      const isTableA = boxA.item.table_id || boxA.item.table_type || boxA.item.category === 'Table Cell' || boxA.item.category === 'Table';
+      if (isTableA) continue;
+
       let containedCount = 0;
       for (let j = 0; j < boxes.length; j++) {
         if (i === j) continue;
@@ -299,7 +463,7 @@ class BBoxParser {
 
           if (interX1 > interX0 && interY1 > interY0) {
             const interArea = (interX1 - interX0) * (interY1 - interY0);
-            if (interArea / boxB.area > 0.70) {
+            if (boxB.area > 0 && interArea / boxB.area > 0.70) {
               containedCount++;
             }
           }
@@ -317,7 +481,6 @@ class BBoxParser {
     // Step 4: Vertical boundary resolution between overlapping boxes
     // When boxA starts above boxB and boxA extends down into boxB:
     // Box A's bottom must stop right above Box B so they become separate non-overlapping boxes!
-    // CRITICAL RULE: NEVER touch or alter X coordinates (width/left/right)!
     for (let i = 0; i < finalBoxes.length; i++) {
       const boxA = finalBoxes[i];
       if (boxA.isDuplicate) continue;
@@ -335,11 +498,13 @@ class BBoxParser {
           // If boxA starts above boxB, and boxA extends into boxB
           if (boxA.y0 < boxB.y0 && boxA.y1 > boxB.y0) {
             // If boxA has meaningful text/height above boxB:
-            if (boxB.y0 - boxA.y0 >= 10) {
+            if (boxB.y0 - boxA.y0 >= minGap) {
               // Trim boxA's bottom so it stops right before boxB starts
-              boxA.y1 = Math.round(boxB.y0 - 2);
+              boxA.y1 = isNorm ? (boxB.y0 - trimMargin) : Math.round(boxB.y0 - trimMargin);
               boxA.h = boxA.y1 - boxA.y0;
-              boxA.item.rawCoords[3] = boxA.y1;
+              if (Array.isArray(boxA.item.rawCoords)) {
+                boxA.item.rawCoords[3] = boxA.y1;
+              }
             } else {
               // boxA starts almost at the same pixel as boxB, so it's an overlapping duplicate
               if (boxA.confidence < boxB.confidence) {
@@ -353,7 +518,7 @@ class BBoxParser {
       }
     }
 
-    return finalBoxes.filter(b => !b.isDuplicate && (b.y1 - b.y0 >= 8)).map(b => b.item);
+    return finalBoxes.filter(b => !b.isDuplicate && (b.y1 - b.y0 >= minHeight)).map(b => b.item);
   }
 
   /**
@@ -522,12 +687,14 @@ class BBoxParser {
           if (typeof sub === 'object' && sub !== null) {
             const pageNum = sub.page || sub.page_number || (pIdx + 1);
             const layoutItems = this._processPageLayoutsWithWords(sub, pageNum, curSentenceIndex);
-            if (layoutItems && layoutItems.length > 0) {
+            if (Array.isArray(layoutItems) && layoutItems.length > 0) {
               extracted.push(...layoutItems);
               curSentenceIndex = layoutItems.nextSentenceIndex || (curSentenceIndex + layoutItems.length);
             } else {
               const fallback = this._extractDeep(sub);
-              fallback.forEach(item => extracted.push({ ...item, page: item.page || pageNum }));
+              if (Array.isArray(fallback)) {
+                fallback.forEach(item => extracted.push({ ...item, page: item.page || pageNum }));
+              }
             }
           }
         });
@@ -542,9 +709,11 @@ class BBoxParser {
           if (typeof sub === 'object' && sub !== null) {
             const pageNum = sub.page || sub.page_number || (pIdx + 1);
             const subExtracted = this._extractDeep(sub);
-            subExtracted.forEach(item => {
-              extracted.push({ ...item, page: item.page || pageNum });
-            });
+            if (Array.isArray(subExtracted)) {
+              subExtracted.forEach(item => {
+                extracted.push({ ...item, page: item.page || pageNum });
+              });
+            }
           }
         });
         if (extracted.length > 0) return extracted;
@@ -566,7 +735,7 @@ class BBoxParser {
             
             // Check if this page has DocLayout-YOLO elements + Surya OCR words
             const pageLayoutItems = this._processPageLayoutsWithWords(pageObj, pageNum, curSentenceIndex);
-            if (pageLayoutItems && pageLayoutItems.length > 0) {
+            if (Array.isArray(pageLayoutItems) && pageLayoutItems.length > 0) {
               items.push(...pageLayoutItems);
               curSentenceIndex = pageLayoutItems.nextSentenceIndex || (curSentenceIndex + pageLayoutItems.length);
               return;
@@ -575,9 +744,11 @@ class BBoxParser {
             for (const k of pageWrapperKeys) {
               if (Array.isArray(pageObj[k]) && pageObj[k].length > 0) {
                 const subExtracted = this._extractDeep(pageObj[k]);
-                subExtracted.forEach(el => {
-                  items.push({ ...el, page: el.page || pageNum });
-                });
+                if (Array.isArray(subExtracted)) {
+                  subExtracted.forEach(el => {
+                    items.push({ ...el, page: el.page || pageNum });
+                  });
+                }
                 break; // use first matching key per page object
               }
             }
@@ -597,8 +768,11 @@ class BBoxParser {
       // Flatten nested lists
       const flat = [];
       data.forEach(sub => {
-        if (typeof sub === 'object') {
-          flat.push(...this._extractDeep(sub));
+        if (typeof sub === 'object' && sub !== null) {
+          const subRes = this._extractDeep(sub);
+          if (Array.isArray(subRes) && subRes.length > 0) {
+            flat.push(...subRes);
+          }
         }
       });
       if (flat.length > 0) return flat;
@@ -611,8 +785,7 @@ class BBoxParser {
         : (typeof require !== 'undefined' ? (() => { try { return require('./sentence-splitter.js'); } catch(e) { return null; } })() : null);
 
       // 0. TABLE & TABLE CELL HANDLING:
-      // "tablolar üzerindeki düzenleme ise hücre bazlı olsun. her hücreyi ayrı cümle olarak al."
-      if (data.cells || data.table_cells || data.cell_bboxes || data.rows || (data.layout_label === 'Table' && (data.cells || data.matches))) {
+      if (this._isTableObject(data)) {
         const Classifier = (typeof TableClassifier !== 'undefined')
           ? TableClassifier
           : (typeof require !== 'undefined' ? (() => { try { return require('./table-classifier.js'); } catch(e) { return null; } })() : null);
@@ -708,8 +881,9 @@ class BBoxParser {
         }));
       }
 
-      // 3. Check for standard container keys (pages, blocks, lines, results, annotations, elements, items, etc.)
+      // 3. Check for standard container keys (tables, pages, blocks, lines, results, annotations, elements, items, etc.)
       const containerKeys = [
+        'tables', 'table_list', 'table_elements', 'table_detections', 'table_cells', 'cells',
         'results', 'annotations', 'elements', 'sentences', 'lines', 'boxes', 'data',
         'predictions', 'documents', 'items', 'blocks', 'paragraphs', 'spans', 'shapes',
         'words', 'readResults', 'analyzeResult', 'detection', 'detections', 'res'
@@ -744,11 +918,14 @@ class BBoxParser {
       if (numericKeys.length > 0 && typeof data[numericKeys[0]] === 'object') {
         const items = [];
         numericKeys.forEach(k => {
-          const pageNum = parseInt(k.replace(/\D/g, ''), 10) || 1;
+          const rawNum = parseInt(k.replace(/\D/g, ''), 10);
+          const pageNum = isNaN(rawNum) ? 1 : (rawNum === 0 ? 1 : rawNum);
           const subItems = this._extractDeep(data[k]);
-          subItems.forEach(it => {
-            items.push({ ...it, page: it.page || pageNum });
-          });
+          if (Array.isArray(subItems)) {
+            subItems.forEach(it => {
+              items.push({ ...it, page: it.page || pageNum });
+            });
+          }
         });
         if (items.length > 0) return items;
       }
@@ -756,6 +933,17 @@ class BBoxParser {
       // 6. If object itself looks like a bounding box item
       if (this._findBoxInObject(data) !== null) {
         return [data];
+      }
+
+      // 7. Generic document/container wrapper object recursion (e.g. { "document_name": [...] } or { "result": { ... } })
+      const allKeys = Object.keys(data);
+      for (const k of allKeys) {
+        if (data[k] && typeof data[k] === 'object') {
+          const subItems = this._extractDeep(data[k]);
+          if (Array.isArray(subItems) && subItems.length > 0) {
+            return subItems;
+          }
+        }
       }
     }
 
@@ -804,6 +992,9 @@ class BBoxParser {
   static _findBoxInObject(obj) {
     if (!obj || typeof obj !== 'object') return null;
 
+    // Keys that represent entire page/image canvas dimensions, NOT individual bounding boxes
+    const ignorePageKeys = ['image_bbox', 'page_bbox', 'canvas_bbox', 'doc_bbox', 'image_size', 'page_size', 'page_box', 'doc_box'];
+
     // Explicit bbox keys
     const boxKeys = [
       'bbox', 'box', 'coordinates', 'koordinat', 'konum', 'kutu', 'rect',
@@ -814,7 +1005,7 @@ class BBoxParser {
     ];
 
     for (const k of boxKeys) {
-      if (obj[k] !== undefined && obj[k] !== null) {
+      if (obj[k] !== undefined && obj[k] !== null && !ignorePageKeys.includes(k.toLowerCase())) {
         return obj[k];
       }
     }
@@ -823,8 +1014,9 @@ class BBoxParser {
     const objKeys = Object.keys(obj);
     for (const k of objKeys) {
       const lower = k.toLowerCase();
+      if (ignorePageKeys.includes(lower)) continue;
       if (
-        lower.includes('box') ||
+        lower.includes('bbox') ||
         lower.includes('coord') ||
         lower.includes('poly') ||
         lower.includes('rect') ||
@@ -1321,9 +1513,9 @@ class BBoxParser {
 
     for (const layout of sortedLayouts) {
       const lType = (layout.type || 'plain text').toLowerCase();
-      const isTable = lType === 'table' || (layout.cells && layout.cells.length > 0);
-      const isTitle = lType.includes('title') || lType.includes('header') || lType.includes('heading');
-      const isAbandon = lType.includes('abandon');
+      const isTable = this._isLayoutTableOrForm(layout);
+      const isTitle = !isTable && (lType.includes('title') || lType.includes('header') || lType.includes('heading'));
+      const isAbandon = !isTable && lType.includes('abandon');
 
       if (!isTable && !isTitle && !isAbandon) {
         // Check if layout is in the same column as the previous layout in currentPlainTextGroup
@@ -1361,214 +1553,264 @@ class BBoxParser {
 
     const pageResultItems = [];
     let sentenceGlobalIndex = startSentenceIndex;
+    let tableIndexCounter = 1;
 
     for (const group of layoutGroups) {
       // 1. TABLE:
       if (group.type === 'table') {
         const layout = group.layouts[0];
+        const tableIndex = (layout.table_index !== undefined) ? layout.table_index : tableIndexCounter++;
+        const currentTableId = layout.id || `table-p${pageNum}-${tableIndex}`;
         const tWords = layout.words || [];
 
+        let detectedType = 'A_MATRIX';
+        const Classifier = (typeof TableClassifier !== 'undefined')
+          ? TableClassifier
+          : (typeof require !== 'undefined' ? (() => { try { return require('./table-classifier.js'); } catch(e) { return null; } })() : null);
+
         if (tWords.length > 0) {
-          let colSplits = [];
-          const rawCells = layout.cells || [];
-          if (rawCells.length > 0) {
-            const xIntervals = [];
-            rawCells.forEach(c => {
-              const b = c.abs_coords || c.cell_coords || c.bbox;
-              if (Array.isArray(b) && b.length >= 4) {
-                xIntervals.push({ x0: b[0], x1: b[2] });
-              }
-            });
-            xIntervals.sort((a, b) => a.x0 - b.x0);
-            const cols = [];
-            xIntervals.forEach(iv => {
-              const match = cols.find(c => Math.abs(c.x0 - iv.x0) < 60 && Math.abs(c.x1 - iv.x1) < 60);
-              if (match) {
-                match.x0 = Math.min(match.x0, iv.x0);
-                match.x1 = Math.max(match.x1, iv.x1);
-              } else {
-                cols.push({ x0: iv.x0, x1: iv.x1 });
-              }
-            });
-            cols.sort((a, b) => a.x0 - b.x0);
-            for (let i = 0; i < cols.length - 1; i++) {
-              colSplits.push((cols[i].x1 + cols[i + 1].x0) / 2);
-            }
-          }
-
-          if (colSplits.length === 0) {
-            colSplits = [(layout.x0 + layout.x1) / 2];
-          }
-
-          const numCols = colSplits.length + 1;
-          const colWords = Array.from({ length: numCols }, () => []);
-
-          tWords.forEach(w => {
-            const cx = (w.bbox[0] + w.bbox[2]) / 2;
-            let colIdx = 0;
-            while (colIdx < colSplits.length && cx >= colSplits[colIdx]) {
-              colIdx++;
-            }
-            colWords[colIdx].push(w);
+          const validWords = tWords.filter(w => {
+            const b = w.bbox || w.coords;
+            return Array.isArray(b) && b.length >= 4;
           });
 
-          const allTableCells = [];
+          // 1. Group words into horizontal lines (rows)
+          const sortedByY = [...validWords].sort((a, b) => {
+            const cyA = (a.bbox[1] + a.bbox[3]) / 2;
+            const cyB = (b.bbox[1] + b.bbox[3]) / 2;
+            return cyA - cyB;
+          });
 
-          colWords.forEach((words, colIdx) => {
-            if (words.length === 0) return;
-            words.sort((a, b) => {
-              const cyA = (a.bbox[1] + a.bbox[3]) / 2;
-              const cyB = (b.bbox[1] + b.bbox[3]) / 2;
-              if (Math.abs(cyA - cyB) > 10) return cyA - cyB;
-              return a.bbox[0] - b.bbox[0];
-            });
-
-            const lines = [];
-            words.forEach(w => {
-              const [wx0, wy0, wx1, wy1] = w.bbox;
-              const wcy = (wy0 + wy1) / 2;
-              const match = lines.find(l => Math.abs(l.cy - wcy) < 12);
-              if (match) {
-                match.words.push(w);
-                match.x0 = Math.min(match.x0, wx0);
-                match.y0 = Math.min(match.y0, wy0);
-                match.x1 = Math.max(match.x1, wx1);
-                match.y1 = Math.max(match.y1, wy1);
-                match.cy = (match.y0 + match.y1) / 2;
-              } else {
-                lines.push({
-                  x0: wx0, y0: wy0, x1: wx1, y1: wy1,
-                  cy: wcy,
-                  words: [w]
-                });
-              }
-            });
-
-            lines.sort((a, b) => a.y0 - b.y0);
-            lines.forEach(l => {
-              l.words.sort((a, b) => a.bbox[0] - b.bbox[0]);
-              l.text = l.words.map(w => w.word).join(' ').trim();
-              l.rawCoords = [l.x0, l.y0, l.x1, l.y1];
-            });
-
-            const colCells = [];
-            let curCell = null;
-            lines.forEach(ln => {
-              const gapY = curCell ? (ln.y0 - curCell.lines[curCell.lines.length - 1].y1) : Infinity;
-              if (curCell && gapY <= 9) {
-                curCell.lines.push(ln);
-                curCell.x0 = Math.min(curCell.x0, ln.x0);
-                curCell.y0 = Math.min(curCell.y0, ln.y0);
-                curCell.x1 = Math.max(curCell.x1, ln.x1);
-                curCell.y1 = Math.max(curCell.y1, ln.y1);
-              } else {
-                if (curCell) colCells.push(curCell);
-                curCell = {
-                  colIdx,
-                  x0: ln.x0, y0: ln.y0, x1: ln.x1, y1: ln.y1,
-                  lines: [ln]
-                };
-              }
-            });
-            if (curCell) colCells.push(curCell);
-
-            colCells.forEach(c => {
-              c.text = c.lines.map(l => l.text).join(' ').trim();
-              const enclosingCell = rawCells.find(cObj => {
-                const b = cObj.abs_coords || cObj.cell_coords || cObj.bbox;
-                if (!Array.isArray(b) || b.length < 4) return false;
-                const cx = (c.x0 + c.x1) / 2;
-                const cy = (c.y0 + c.y1) / 2;
-                return cx >= b[0] - 10 && cx <= b[2] + 10 && cy >= b[1] - 10 && cy <= b[3] + 10;
+          const lines = [];
+          sortedByY.forEach(w => {
+            const [wx0, wy0, wx1, wy1] = w.bbox;
+            const wcy = (wy0 + wy1) / 2;
+            const match = lines.find(l => Math.abs(l.cy - wcy) < 10);
+            if (match) {
+              match.words.push(w);
+              match.x0 = Math.min(match.x0, wx0);
+              match.y0 = Math.min(match.y0, wy0);
+              match.x1 = Math.max(match.x1, wx1);
+              match.y1 = Math.max(match.y1, wy1);
+              match.cy = (match.y0 + match.y1) / 2;
+            } else {
+              lines.push({
+                x0: wx0, y0: wy0, x1: wx1, y1: wy1,
+                cy: wcy,
+                words: [w]
               });
-              const b = enclosingCell ? (enclosingCell.abs_coords || enclosingCell.cell_coords || enclosingCell.bbox) : null;
-              c.rowTop = b ? b[1] : c.y0;
-              allTableCells.push(c);
-            });
+            }
           });
 
-          allTableCells.sort((a, b) => {
-            if (Math.abs(a.rowTop - b.rowTop) > 30) return a.rowTop - b.rowTop;
-            return a.colIdx - b.colIdx;
+          lines.sort((a, b) => a.y0 - b.y0);
+
+          // 2. Discover global column cut planes from intra-line gaps
+          const gapCuts = [];
+          lines.forEach(l => {
+            l.words.sort((a, b) => a.bbox[0] - b.bbox[0]);
+            for (let i = 0; i < l.words.length - 1; i++) {
+              const wA = l.words[i];
+              const wB = l.words[i + 1];
+              const gap = wB.bbox[0] - wA.bbox[2];
+              const tA = (wA.word || wA.text || '').trim();
+              if (gap >= 22 || ((tA === ':' || tA.endsWith(':')) && gap >= 10)) {
+                gapCuts.push((wA.bbox[2] + wB.bbox[0]) / 2);
+              }
+            }
           });
 
-          allTableCells.forEach((cell, cellIdx) => {
-            const fullCellText = cell.text;
-            if (!fullCellText) return;
+          gapCuts.sort((a, b) => a - b);
+          const colSplits = [];
+          gapCuts.forEach(gx => {
+            const match = colSplits.find(cl => Math.abs(cl.center - gx) <= 25);
+            if (match) {
+              match.points.push(gx);
+              match.center = match.points.reduce((a, b) => a + b, 0) / match.points.length;
+            } else {
+              colSplits.push({ center: gx, points: [gx] });
+            }
+          });
+          const globalSplitX = colSplits.map(cl => cl.center).sort((a, b) => a - b);
 
-            const sentences = (Splitter && typeof Splitter.splitParagraphIntoSentences === 'function')
-              ? Splitter.splitParagraphIntoSentences(fullCellText)
-              : [{ text: fullCellText, start: 0, end: fullCellText.length }];
+          // 3. For each line, partition words into cells using gaps and global splits
+          const sortedTableCells = [];
+          lines.forEach((l, rIdx) => {
+            l.words.sort((a, b) => a.bbox[0] - b.bbox[0]);
+            const rowCellWordGroups = [];
+            let curGroup = [];
 
-            const lineIndices = [];
-            let searchIdx = 0;
-            cell.lines.forEach(ln => {
-              let s = fullCellText.indexOf(ln.text, searchIdx);
-              if (s === -1) s = fullCellText.indexOf(ln.text);
-              if (s === -1) s = 0;
-              const e = s + ln.text.length;
-              searchIdx = e;
-              lineIndices.push({ text: ln.text, start: s, end: e, bbox: ln.rawCoords });
-            });
+            for (let i = 0; i < l.words.length; i++) {
+              const w = l.words[i];
+              if (curGroup.length === 0) {
+                curGroup.push(w);
+                continue;
+              }
 
-            if (Splitter && typeof Splitter.mapSentencesToLines === 'function') {
-              Splitter.mapSentencesToLines(sentences, lineIndices);
+              const prevW = curGroup[curGroup.length - 1];
+              const gap = w.bbox[0] - prevW.bbox[2];
+              const prevText = (prevW.word || prevW.text || '').trim();
+              const currText = (w.word || w.text || '').trim();
+
+              const crossesGlobalSplit = globalSplitX.some(sx => prevW.bbox[2] <= sx && w.bbox[0] >= sx);
+              const isColonBoundary = (prevText === ':' || prevText.endsWith(':')) && gap >= 10;
+              const isLargeGap = gap >= 22;
+
+              // Attach standalone ':' to preceding label; do not isolate ':' as its own cell
+              const isSplit = (currText !== ':') && (crossesGlobalSplit || isColonBoundary || isLargeGap);
+
+              if (isSplit) {
+                rowCellWordGroups.push(curGroup);
+                curGroup = [w];
+              } else {
+                curGroup.push(w);
+              }
+            }
+            if (curGroup.length > 0) {
+              rowCellWordGroups.push(curGroup);
             }
 
-            sentences.forEach(s => {
-              const sId = sentenceGlobalIndex++;
-              const sBBoxes = (Splitter && typeof Splitter.calculateSentenceBBoxes === 'function')
-                ? Splitter.calculateSentenceBBoxes(s)
-                : cell.lines.map(l => l.rawCoords);
+            rowCellWordGroups.forEach((wGroup, cIdx) => {
+              const cx0 = Math.min(...wGroup.map(w => w.bbox[0]));
+              const cy0 = Math.min(...wGroup.map(w => w.bbox[1]));
+              const cx1 = Math.max(...wGroup.map(w => w.bbox[2]));
+              const cy1 = Math.max(...wGroup.map(w => w.bbox[3]));
+              const text = wGroup.map(w => w.word || w.text || '').join(' ').trim();
 
-              if (sBBoxes && sBBoxes.length > 0) {
-                sBBoxes.forEach((b, bi) => {
-                  pageResultItems.push({
-                    id: `${layout.id}-c${cellIdx + 1}-s${sId}-l${bi + 1}`,
-                    id_display: sId,
-                    sentence_id: sId,
-                    page: pageNum,
-                    text: (s.bbox_texts && s.bbox_texts[bi]) ? s.bbox_texts[bi] : s.text,
-                    fullSentenceText: s.text,
-                    bbox: [Math.round(b[0]), Math.round(b[1]), Math.round(b[2]), Math.round(b[3])],
-                    rawBox: [Math.round(b[0]), Math.round(b[1]), Math.round(b[2]), Math.round(b[3])],
-                    rawCoords: [Math.round(b[0]), Math.round(b[1]), Math.round(b[2]), Math.round(b[3])],
-                    coordType: 'abs_points',
-                    category: 'Table Cell',
-                    confidence: layout.confidence || 0.98,
-                    layoutProcessed: true,
-                    layout_id: layout.id
-                  });
+              if (text) {
+                sortedTableCells.push({
+                  row: rIdx,
+                  col: cIdx,
+                  text: text,
+                  rawCoords: [cx0, cy0, cx1, cy1],
+                  confidence: layout.confidence || 0.98,
+                  words: wGroup
                 });
               }
             });
           });
+
+          // Check if table classifier classifies this table
+          if (Classifier && typeof Classifier.classifyStructure === 'function') {
+            try {
+              const classification = Classifier.classifyStructure({
+                cells: sortedTableCells.map((c, i) => ({
+                  id: `c_${i}`,
+                  row: c.row,
+                  col: c.col,
+                  text: c.text,
+                  rawCoords: c.rawCoords
+                }))
+              });
+              if (classification && classification.type) {
+                detectedType = classification.type;
+              }
+            } catch (e) {
+              console.warn('[BboxParser] Table classification failed:', e);
+            }
+          }
+
+          // If TableClassifier can process the reading order & IDs for these exact cells:
+          if (Classifier && typeof Classifier.processTable === 'function') {
+            const tableObj = {
+              id: currentTableId,
+              table_id: currentTableId,
+              cells: sortedTableCells,
+              forced_type: detectedType
+            };
+            const tRes = Classifier.processTable(tableObj, pageNum, sentenceGlobalIndex, tableIndex);
+            if (tRes && tRes.items && tRes.items.length > 0) {
+              tRes.items.forEach(it => {
+                pageResultItems.push({
+                  ...it,
+                  page: pageNum,
+                  layoutProcessed: true,
+                  layout_id: currentTableId
+                });
+              });
+              sentenceGlobalIndex = tRes.nextSentenceNumber;
+              continue;
+            }
+          }
+
+          // 4. Extract headers for A_MATRIX semantic speech
+          const rowHeadersMap = new Map();
+          const colHeadersMap = new Map();
+          sortedTableCells.filter(c => c.row === 0).forEach(c => colHeadersMap.set(c.col, c.text));
+          sortedTableCells.filter(c => c.col === 0).forEach(c => rowHeadersMap.set(c.row, c.text));
+
+          // 5. Emit EVERY cell as an individual BBox
+          sortedTableCells.forEach((cell, cellIdx) => {
+            const sId = sentenceGlobalIndex++;
+            const tOrderId = cellIdx + 1;
+
+            let fullText = cell.text;
+            if (detectedType === 'A_MATRIX') {
+              if (cell.row === 0) {
+                fullText = colHeadersMap.get(cell.col) || cell.text;
+              } else if (cell.col === 0) {
+                fullText = rowHeadersMap.get(cell.row) || cell.text;
+              } else {
+                const rowInfo = rowHeadersMap.get(cell.row) || `${cell.row + 1}`;
+                const colInfo = colHeadersMap.get(cell.col) || `${cell.col + 1}`;
+                fullText = `Satır ${rowInfo}, Sütun ${colInfo}, Değer ${cell.text}`;
+              }
+            }
+
+            pageResultItems.push({
+              id: `${layout.id}-c${cellIdx + 1}-s${sId}`,
+              id_display: sId,
+              sentence_id: sId,
+              page: pageNum,
+              text: cell.text,
+              fullSentenceText: fullText,
+              bbox: [Math.round(cell.rawCoords[0]), Math.round(cell.rawCoords[1]), Math.round(cell.rawCoords[2]), Math.round(cell.rawCoords[3])],
+              rawBox: [Math.round(cell.rawCoords[0]), Math.round(cell.rawCoords[1]), Math.round(cell.rawCoords[2]), Math.round(cell.rawCoords[3])],
+              rawCoords: [Math.round(cell.rawCoords[0]), Math.round(cell.rawCoords[1]), Math.round(cell.rawCoords[2]), Math.round(cell.rawCoords[3])],
+              coordType: 'abs_points',
+              category: 'Table Cell',
+              confidence: cell.confidence || layout.confidence || 0.98,
+              table_id: currentTableId,
+              table_type: detectedType,
+              table_order_id: tOrderId,
+              table_order_label: `T${tOrderId}`,
+              layoutProcessed: true,
+              layout_id: currentTableId
+            });
+          });
+
           continue;
         }
 
         // Fallback raw cells
         const rawCells = layout.cells || [];
-        rawCells.forEach((c, cIdx) => {
-          const cBox = c.abs_coords || c.cell_coords || c.bbox || [layout.x0, layout.y0, layout.x1, layout.y1];
-          const cText = (c.text || '').trim() || `Hücre #${cIdx + 1}`;
-          const sId = sentenceGlobalIndex++;
-          pageResultItems.push({
-            id: `${layout.id}-c${cIdx + 1}`,
-            id_display: sId,
-            sentence_id: sId,
-            page: pageNum,
-            text: cText,
-            fullSentenceText: cText,
-            bbox: [Math.round(cBox[0]), Math.round(cBox[1]), Math.round(cBox[2]), Math.round(cBox[3])],
-            rawBox: [Math.round(cBox[0]), Math.round(cBox[1]), Math.round(cBox[2]), Math.round(cBox[3])],
-            rawCoords: [Math.round(cBox[0]), Math.round(cBox[1]), Math.round(cBox[2]), Math.round(cBox[3])],
-            coordType: 'abs_points',
-            category: 'Table Cell',
-            confidence: c.confidence || layout.confidence || 0.98,
-            layoutProcessed: true,
-            layout_id: layout.id
+        if (rawCells.length > 0) {
+          rawCells.forEach((c, cIdx) => {
+            const cBox = c.abs_coords || c.cell_coords || c.bbox || [layout.x0, layout.y0, layout.x1, layout.y1];
+            const cText = (c.text || '').trim() || `Hücre #${cIdx + 1}`;
+            const sId = sentenceGlobalIndex++;
+            pageResultItems.push({
+              id: `${currentTableId}-c${cIdx + 1}`,
+              id_display: sId,
+              sentence_id: sId,
+              page: pageNum,
+              text: cText,
+              fullSentenceText: cText,
+              bbox: [Math.round(cBox[0]), Math.round(cBox[1]), Math.round(cBox[2]), Math.round(cBox[3])],
+              rawBox: [Math.round(cBox[0]), Math.round(cBox[1]), Math.round(cBox[2]), Math.round(cBox[3])],
+              rawCoords: [Math.round(cBox[0]), Math.round(cBox[1]), Math.round(cBox[2]), Math.round(cBox[3])],
+              coordType: 'abs_points',
+              category: 'Table Cell',
+              confidence: c.confidence || layout.confidence || 0.98,
+              table_id: currentTableId,
+              table_type: detectedType,
+              table_order_id: cIdx + 1,
+              table_order_label: `T${cIdx + 1}`,
+              layoutProcessed: true,
+              layout_id: currentTableId
+            });
           });
-        });
+          continue;
+        }
         continue;
       }
 

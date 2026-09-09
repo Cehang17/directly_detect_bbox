@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html lang="tr">
+
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -9,12 +10,15 @@
   <title>PDF Sentence & BBox Editor</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com">
-  <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+  <link
+    href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&family=Inter:wght@400;500;600&display=swap"
+    rel="stylesheet">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
-  <link rel="stylesheet" href="css/style.css?v=40.0">
+  <link rel="stylesheet" href="css/style.css?v=41.0">
   <!-- PDF.js Core library (Local Same-Origin for speed and reliability) -->
   <script src="js/pdf.min.js"></script>
 </head>
+
 <body>
   <div class="editor-app">
     <!-- Top Toolbar -->
@@ -24,11 +28,23 @@
           <i class="fa-solid fa-file-pdf"></i> <span id="top-pdf-label">PDF Yükle</span>
         </button>
         <input type="file" id="top-pdf-input" accept=".pdf,application/pdf" style="display:none">
-        
+
         <button type="button" id="top-json-btn" class="topbar-btn file-btn" title="JSON Yükle">
           <i class="fa-solid fa-file-code"></i> <span id="top-json-label">JSON Yükle</span>
         </button>
         <input type="file" id="top-json-input" accept=".json,application/json,text/plain" style="display:none">
+
+        <button type="button" id="top-tables-btn" class="topbar-btn tables-btn" title="Tabloları Listele"
+          style="display:none">
+          <i class="fa-solid fa-table-cells"></i> <span>Tablolar</span>
+          <span id="tables-badge" class="table-count-badge hidden">0</span>
+        </button>
+
+        <a href="table-tester.html" target="_blank" class="topbar-btn"
+          title="Yalnızca Tabloları ve Okuma Sıralarını Test Et"
+          style="background:rgba(2,132,199,0.18); border-color:#38bdf8; color:#38bdf8; text-decoration:none;">
+          <i class="fa-solid fa-flask"></i> <span>Tablo Laboratuvarı</span>
+        </a>
 
         <div id="topbar-status-tag" class="topbar-status-tag hidden"></div>
       </div>
@@ -48,8 +64,33 @@
         </div>
       </div>
 
-      <!-- Topbar Right: Export -->
+      <!-- Topbar Right: TTS Audio Reader & Export -->
       <div class="topbar-right">
+        <!-- Audio Reader TTS Controls -->
+        <div class="tts-controls-wrap">
+          <button type="button" id="tts-play-btn" class="topbar-btn tts-btn tts-play-btn"
+            title="Belgeyi Sırayla Oku (Play/Pause)">
+            <i class="fa-solid fa-play"></i> <span id="tts-play-text">Sesli Oku</span>
+          </button>
+          <button type="button" id="tts-speak-selected-btn" class="topbar-btn tts-btn"
+            title="Yalnızca Seçili Cümleyi / Hücreyi Oku">
+            <i class="fa-solid fa-volume-high"></i> <span>Seçileni Oku</span>
+          </button>
+          <button type="button" id="tts-stop-btn" class="topbar-btn tts-stop-btn hidden" title="Durdur">
+            <i class="fa-solid fa-stop"></i>
+          </button>
+          <div class="tts-speed-wrap" title="Okuma Hızı">
+            <i class="fa-solid fa-gauge-high"></i>
+            <select id="tts-speed-select" class="tts-speed-select" aria-label="Okuma Hızı">
+              <option value="0.75">0.75x</option>
+              <option value="1.0" selected>1.0x</option>
+              <option value="1.25">1.25x</option>
+              <option value="1.5">1.5x</option>
+              <option value="2.0">2.0x</option>
+            </select>
+          </div>
+        </div>
+
         <button id="export-json-btn" class="topbar-btn export-btn" title="Düzenlenmiş JSON'u İndir">
           <i class="fa-solid fa-download"></i> JSON İndir
         </button>
@@ -64,7 +105,8 @@
         <div id="viewport-banner" class="viewport-banner hidden">
           <div class="banner-content">
             <i class="fa-solid fa-circle-info banner-icon"></i>
-            <span id="banner-text">PDF görüntülendi. Cümleleri ve Bounding Box kutularını görmek için JSON dosyanızı seçin:</span>
+            <span id="banner-text">PDF görüntülendi. Cümleleri ve Bounding Box kutularını görmek için JSON dosyanızı
+              seçin:</span>
             <button type="button" id="banner-json-btn" class="banner-upload-btn">
               <i class="fa-solid fa-file-code"></i> JSON Seç
             </button>
@@ -83,7 +125,7 @@
             </div>
             <h2>PDF ve JSON Dosyalarını Yükleyin</h2>
             <p>Dosyalarınızı buraya sürükleyip bırakabilir veya aşağıdaki butonlara basarak seçebilirsiniz</p>
-            
+
             <!-- Live Selection Status Cards -->
             <div class="selection-status-row">
               <div id="card-status-pdf" class="status-chip waiting">
@@ -153,18 +195,87 @@
 
         <!-- ID Editor Form -->
         <div class="sidebar-section form-block">
-          <label class="form-label" for="bbox-id-input">Id</label>
-          <input type="text" id="bbox-id-input" class="form-input" placeholder="ID giriniz">
+          <label class="form-label" for="bbox-id-input">Id (Okuma Sırası)</label>
+          <input type="number" id="bbox-id-input" class="form-input" placeholder="ID giriniz" min="0">
           <button id="save-id-btn" class="sidebar-btn full-btn action-save-btn">Save Id</button>
+        </div>
+
+        <!-- Table Type Selector -->
+        <div id="sidebar-table-info" class="sidebar-section form-block" style="display:none">
+          <label class="form-label">
+            <i class="fa-solid fa-table-cells" style="color:#38bdf8"></i>
+            Tablo Tipi
+          </label>
+          <div style="display:flex; gap:6px; margin-bottom:8px; flex-wrap:wrap;">
+            <span id="sidebar-table-type-badge" style="
+              background: linear-gradient(135deg,#0284c7,#0369a1);
+              color:#fff; font-size:11px; font-weight:700;
+              padding:3px 10px; border-radius:20px; letter-spacing:.5px;
+            ">A_MATRIX</span>
+            <span id="sidebar-table-order-badge" style="
+              background:rgba(255,255,255,0.08); color:#94a3b8;
+              font-size:11px; padding:3px 10px; border-radius:20px;
+            ">Tablo Sırası: #1</span>
+          </div>
+
+          <div id="sidebar-type-desc" style="
+            font-size:11px; color:#64748b; margin-bottom:8px;
+            padding:6px 8px; background:rgba(0,0,0,0.2);
+            border-radius:6px; line-height:1.5;
+          ">Tablo tipini değiştirerek okuma sırasını yeniden hesaplayabilirsiniz.</div>
+
+          <select id="sidebar-table-type-select" class="form-input" style="
+            background:rgba(15,23,42,0.9); color:#f8fafc;
+            border:1px solid rgba(255,255,255,0.15);
+            border-radius:6px; padding:7px 10px;
+            width:100%; font-size:12px; cursor:pointer; margin-bottom:8px;
+          ">
+            <option value="A_MATRIX">🔢 A — Klasik Matris (satır×sütun)</option>
+            <option value="B_KEY_VALUE">🏷️ B — Etiket : Değer / Form</option>
+            <option value="C_PARALLEL_TEXT">📄 C — Paralel Paragraf (sütun bazlı)</option>
+            <option value="D_MERGED_CELLS">🔀 D — Birleşik Hücreli / Hiyerarşik</option>
+            <option value="E_FORMULA">🧮 E — Formül / Matematiksel</option>
+            <option value="F_HYBRID_NOTE">📝 F — Dipnotlu Hibrit Tablo</option>
+            <option value="NOT_TABLE">🚫 Tablo Değil</option>
+          </select>
+
+          <button id="save-table-type-btn" class="sidebar-btn full-btn action-save-btn" style="
+            background:linear-gradient(135deg,#0284c7,#0369a1);
+            border-color:#38bdf8; margin-bottom:0;
+          ">
+            <i class="fa-solid fa-arrows-rotate"></i> Tipi Uygula &amp; Okuma Sırasını Güncelle
+          </button>
         </div>
 
         <!-- Paragraph / Sentence Text Editor Form -->
         <div class="sidebar-section form-block grow-block">
           <label class="form-label" for="bbox-text-input">Input paragraph text</label>
-          <textarea id="bbox-text-input" class="form-textarea" placeholder="Seçili cümlenin veya paragrafın metni burada görüntülenecektir..."></textarea>
-          <button id="save-text-btn" class="sidebar-btn full-btn action-save-btn">Save Text</button>
+          <textarea id="bbox-text-input" class="form-textarea"
+            placeholder="Seçili cümlenin veya paragrafın metni burada görüntülenecektir..."></textarea>
+          <div style="display:flex; gap:8px;">
+            <button id="save-text-btn" class="sidebar-btn full-btn action-save-btn" style="flex:1;">Save Text</button>
+            <button id="sidebar-speak-btn" class="sidebar-btn full-btn"
+              style="flex:1; background:rgba(14,165,233,0.18); color:#38bdf8; border-color:rgba(14,165,233,0.4);"
+              title="Seçili Metni Seslendir">
+              <i class="fa-solid fa-volume-high"></i> Dinle
+            </button>
+          </div>
         </div>
       </aside>
+    </div>
+  </div>
+
+  <!-- Dedicated Table Processing / Editing Modal Overlay (Screen Blocker) -->
+  <div id="table-processing-overlay" class="table-processing-overlay hidden">
+    <div class="processing-card">
+      <div class="processing-spinner-wrap">
+        <i class="fa-solid fa-arrows-rotate fa-spin processing-spinner"></i>
+      </div>
+      <h3 id="processing-title" class="processing-title">Tablo Düzenleniyor...</h3>
+      <p id="processing-desc" class="processing-desc">C Tipi Tablo: Okuma sırası ve cümle ID'leri yukarıdan aşağıya (NLP kuralları ile) yeniden hesaplanıyor...</p>
+      <div class="processing-bar-wrap">
+        <div class="processing-bar-inner"></div>
+      </div>
     </div>
   </div>
 
@@ -172,11 +283,13 @@
   <div id="toast-container" class="toast-container"></div>
 
   <!-- Application Scripts -->
-  <script src="js/table-classifier.js?v=127.0"></script>
-  <script src="js/sentence-splitter.js?v=127.0"></script>
-  <script src="js/bbox-parser.js?v=127.0"></script>
-  <script src="js/overlay.js?v=127.0"></script>
-  <script src="js/pdf-viewer.js?v=127.0"></script>
-  <script src="js/app.js?v=127.0"></script>
+  <script src="js/table-classifier.js?v=190.0"></script>
+  <script src="js/sentence-splitter.js?v=190.0"></script>
+  <script src="js/bbox-parser.js?v=190.0"></script>
+  <script src="js/tts-reader.js?v=190.0"></script>
+  <script src="js/overlay.js?v=190.0"></script>
+  <script src="js/pdf-viewer.js?v=190.0"></script>
+  <script src="js/app.js?v=190.0"></script>
 </body>
+
 </html>

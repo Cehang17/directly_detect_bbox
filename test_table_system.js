@@ -3,145 +3,186 @@ const TableClassifier = require('./js/table-classifier.js');
 const SentenceSplitter = require('./js/sentence-splitter.js');
 const BBoxParser = require('./js/bbox-parser.js');
 
-console.log('--- TESTING TABLE CLASSIFIER & READING ORDER SYSTEM ---');
+console.log('=== TESTING 6 TABLE CLASSIFICATION & DUAL READING ORDER SYSTEM ===\n');
 
-// Test 1: A_MATRIX (Multi-column financial/statistical grid)
+// 1. A_MATRIX (4x4 Branch & Revenue Comparison Matrix)
 const matrixTable = {
+  id: 'table-1-matrix',
   bbox: [50, 50, 450, 200],
   cells: [
-    { row: 0, col: 0, rawCoords: [50, 50, 150, 90], text: 'Dönem' },
-    { row: 0, col: 1, rawCoords: [150, 50, 300, 90], text: 'Elektrik Gideri' },
-    { row: 0, col: 2, rawCoords: [300, 50, 450, 90], text: 'Su Gideri' },
-    { row: 1, col: 0, rawCoords: [50, 90, 150, 140], text: 'Ocak Ayı' },
-    { row: 1, col: 1, rawCoords: [150, 90, 300, 140], text: '1.250 TL' },
-    { row: 1, col: 2, rawCoords: [300, 90, 450, 140], text: '400 TL' },
-    { row: 2, col: 0, rawCoords: [50, 140, 150, 190], text: 'Şubat Ayı' },
-    { row: 2, col: 1, rawCoords: [150, 140, 300, 190], text: '1.400 TL' },
-    { row: 2, col: 2, rawCoords: [300, 140, 450, 190], text: '420 TL' }
+    { row: 0, col: 0, rawCoords: [50, 50, 150, 80], text: 'Şube Adı' },
+    { row: 0, col: 1, rawCoords: [150, 50, 250, 80], text: '2023 Q1 Gelir (₺)' },
+    { row: 0, col: 2, rawCoords: [250, 50, 350, 80], text: '2023 Q2 Gelir (₺)' },
+    { row: 0, col: 3, rawCoords: [350, 50, 450, 80], text: 'Büyüme Oranı' },
+    { row: 1, col: 0, rawCoords: [50, 80, 150, 110], text: 'Kadıköy' },
+    { row: 1, col: 1, rawCoords: [150, 80, 250, 110], text: '120.000' },
+    { row: 1, col: 2, rawCoords: [250, 80, 350, 110], text: '145.000' },
+    { row: 1, col: 3, rawCoords: [350, 80, 450, 110], text: '%20.8' },
+    { row: 2, col: 0, rawCoords: [50, 110, 150, 140], text: 'Beşiktaş' },
+    { row: 2, col: 1, rawCoords: [150, 110, 250, 140], text: '115.000' },
+    { row: 2, col: 2, rawCoords: [250, 110, 350, 140], text: '125.000' },
+    { row: 2, col: 3, rawCoords: [350, 110, 450, 140], text: '%8.6' }
   ]
 };
 
-const res1 = TableClassifier.processTable(matrixTable, 1, 1);
-console.log('1. A_MATRIX Classification:', res1.tableType);
+const res1 = TableClassifier.processTable(matrixTable, 1, 1, 1);
+console.log('1. A_MATRIX Type:', res1.tableType, '| Items:', res1.items.length);
 assert.strictEqual(res1.tableType, 'A_MATRIX');
-console.log('   Sample reading text:', res1.items[4].fullSentenceText);
-assert.ok(res1.items[4].fullSentenceText.includes('Ocak Ayı') && res1.items[4].fullSentenceText.includes('Elektrik Gideri'));
+console.log('   Global ID:', res1.items[5].sentence_id, '| Table Order ID:', res1.items[5].table_order_id);
+console.log('   Cell Text:', res1.items[5].text);
+assert.strictEqual(res1.items[5].table_order_id, 6);
+assert.strictEqual(res1.items[5].text, '120.000');
 
-// Test 2: B_KEY_VALUE (2-column form key-value pairs)
+// 2. B_KEY_VALUE (3-column form with ':' separator)
 const keyValueTable = {
-  bbox: [50, 50, 400, 180],
+  id: 'table-2-kv',
+  bbox: [50, 50, 400, 220],
   cells: [
-    { row: 0, col: 0, rawCoords: [50, 50, 150, 90], text: 'Müşteri Adı' },
-    { row: 0, col: 1, rawCoords: [150, 50, 400, 90], text: 'Hasan Yılmaz' },
-    { row: 1, col: 0, rawCoords: [50, 90, 150, 130], text: 'Hesap No' },
-    { row: 1, col: 1, rawCoords: [150, 90, 400, 130], text: '123456789' },
-    { row: 2, col: 0, rawCoords: [50, 130, 150, 170], text: 'IBAN' },
-    { row: 2, col: 1, rawCoords: [150, 130, 400, 170], text: 'TR12 0006 1005 1234 5678 9012 34' }
+    { row: 0, col: 0, rawCoords: [50, 50, 150, 80], text: 'Adı Soyadı' },
+    { row: 0, col: 1, rawCoords: [150, 50, 170, 80], text: ':' },
+    { row: 0, col: 2, rawCoords: [170, 50, 400, 80], text: 'Ahmet Yılmaz' },
+    { row: 1, col: 0, rawCoords: [50, 80, 150, 110], text: 'TCKN' },
+    { row: 1, col: 1, rawCoords: [150, 80, 170, 110], text: ':' },
+    { row: 1, col: 2, rawCoords: [170, 80, 400, 110], text: '12345678901' },
+    { row: 2, col: 0, rawCoords: [50, 110, 150, 140], text: 'Doğum Tarihi' },
+    { row: 2, col: 1, rawCoords: [150, 110, 170, 140], text: ':' },
+    { row: 2, col: 2, rawCoords: [170, 110, 400, 140], text: '15.08.1985' }
   ]
 };
 
-const res2 = TableClassifier.processTable(keyValueTable, 1, 1);
-console.log('2. B_KEY_VALUE Classification:', res2.tableType);
+const res2 = TableClassifier.processTable(keyValueTable, 1, 1, 2);
+console.log('\n2. B_KEY_VALUE Type:', res2.tableType);
 assert.strictEqual(res2.tableType, 'B_KEY_VALUE');
-console.log('   Sample reading text:', res2.items[0].fullSentenceText);
-assert.ok(res2.items[0].fullSentenceText.includes('Müşteri Adı: Hasan Yılmaz'));
+console.log('   First Cell Text:', res2.items[0].text);
+console.log('   First Pair Table Order ID:', res2.items[0].table_order_id, '| Second Pair Table Order ID:', res2.items[3].table_order_id);
+assert.strictEqual(res2.items[0].table_order_id, 1);
+assert.strictEqual(res2.items[3].table_order_id, 4);
+assert.strictEqual(res2.items[0].text, 'Adı Soyadı');
 
-// Test 3: C_PARALLEL_TEXT (False table containing long paragraph sentences)
+// 3. C_PARALLEL_TEXT (Parallel Multi-Column Paragraph Blocks)
 const parallelTextTable = {
+  id: 'table-3-para',
   bbox: [50, 50, 500, 300],
   cells: [
-    { row: 0, col: 0, rawCoords: [50, 50, 500, 100], text: 'Bu sözleşme taraflar arasındaki tüm ticari ve hukuki yükümlülükleri eksiksiz olarak düzenlemektedir.' },
-    { row: 1, col: 0, rawCoords: [50, 100, 500, 150], text: 'Taraflardan herhangi biri sözleşme şartlarına aykırı davrandığı takdirde tazminat ödemekle mükelleftir.' },
-    { row: 2, col: 0, rawCoords: [50, 150, 500, 200], text: 'Uyuşmazlık durumunda İstanbul Mahkemeleri ve İcra Daireleri yetkilidir.' }
+    { row: 0, col: 0, rawCoords: [50, 50, 270, 150], text: 'Yapay zeka teknolojileri son yıllarda büyük bir ivme kazanmıştır. Özellikle doğal dil işleme alanındaki gelişmeler makinelerin insan dilini anlama kapasitesini artırmıştır.' },
+    { row: 0, col: 1, rawCoords: [280, 50, 500, 150], text: 'Bu gelişmeler sadece teknoloji dünyasını değil, aynı zamanda finans, sağlık ve eğitim gibi birçok farklı sektörü de derinden dönüştürmektedir.' },
+    { row: 1, col: 0, rawCoords: [50, 160, 270, 260], text: 'Şirketler artık müşteri hizmetleri operasyonlarını otomatize etmek için bu modellerden faydalanmaktadır.' },
+    { row: 1, col: 1, rawCoords: [280, 160, 500, 260], text: 'Gelecekte bu sistemlerin çok daha entegre ve çoklu modal çalışması beklenmektedir.' }
   ]
 };
 
-const res3 = TableClassifier.processTable(parallelTextTable, 1, 1);
-console.log('3. C_PARALLEL_TEXT Classification:', res3.tableType);
+const res3 = TableClassifier.processTable(parallelTextTable, 1, 1, 3);
+console.log('\n3. C_PARALLEL_TEXT Type:', res3.tableType);
 assert.strictEqual(res3.tableType, 'C_PARALLEL_TEXT');
 console.log('   Decomposed plain text count:', res3.items.length);
-assert.ok(res3.items[0].category === 'Plain Text');
+assert.strictEqual(res3.items[0].table_type, 'C_PARALLEL_TEXT');
 
-// Test 4: D_MERGED_CELLS (Hierarchical headers with rowspan / colspan)
+// 4. D_MERGED_CELLS (Hierarchical Headers with Colspan & Rowspan)
 const mergedTable = {
-  bbox: [50, 50, 450, 200],
+  id: 'table-4-merged',
+  bbox: [50, 50, 450, 220],
   cells: [
-    { row: 0, col: 0, rowspan: 2, colspan: 1, rawCoords: [50, 50, 150, 120], text: 'Bölge' },
-    { row: 0, col: 1, rowspan: 1, colspan: 2, rawCoords: [150, 50, 450, 85], text: '2025 Yılı Finansal Göstergeleri' },
-    { row: 1, col: 1, rowspan: 1, colspan: 1, rawCoords: [150, 85, 300, 120], text: 'Gelir' },
-    { row: 1, col: 2, rowspan: 1, colspan: 1, rawCoords: [300, 85, 450, 120], text: 'Gider' },
-    { row: 2, col: 0, rowspan: 1, colspan: 1, rawCoords: [50, 120, 150, 160], text: 'Marmara' },
-    { row: 2, col: 1, rowspan: 1, colspan: 1, rawCoords: [150, 120, 300, 160], text: '50.000 TL' },
-    { row: 2, col: 2, rowspan: 1, colspan: 1, rawCoords: [300, 120, 450, 160], text: '30.000 TL' }
+    { row: 0, col: 0, colspan: 4, rawCoords: [50, 50, 450, 80], text: '2024 Yılı Yarıyıl Satış ve Hedef Gerçekleşme Raporu' },
+    { row: 1, col: 0, rowspan: 2, rawCoords: [50, 80, 150, 140], text: 'Bölge' },
+    { row: 1, col: 1, colspan: 2, rawCoords: [150, 80, 350, 110], text: 'Satış Rakamları (₺)' },
+    { row: 1, col: 3, rowspan: 2, rawCoords: [350, 80, 450, 140], text: 'Durum' },
+    { row: 2, col: 1, rawCoords: [150, 110, 250, 140], text: 'Ocak - Mart' },
+    { row: 2, col: 2, rawCoords: [250, 110, 350, 140], text: 'Nisan - Haziran' },
+    { row: 3, col: 0, rawCoords: [50, 140, 150, 180], text: 'Marmara' },
+    { row: 3, col: 1, rawCoords: [150, 140, 250, 180], text: '500.000' },
+    { row: 3, col: 2, rawCoords: [250, 140, 350, 180], text: '650.000' },
+    { row: 3, col: 3, rawCoords: [350, 140, 450, 180], text: 'Başarılı' }
   ]
 };
 
-const res4 = TableClassifier.processTable(mergedTable, 1, 1);
-console.log('4. D_MERGED_CELLS Classification:', res4.tableType);
+const res4 = TableClassifier.processTable(mergedTable, 1, 1, 4);
+console.log('\n4. D_MERGED_CELLS Type:', res4.tableType);
 assert.strictEqual(res4.tableType, 'D_MERGED_CELLS');
+console.log('   Top Banner Text:', res4.items[0].text);
+assert.strictEqual(res4.items[0].text, '2024 Yılı Yarıyıl Satış ve Hedef Gerçekleşme Raporu');
 
-// Test 5: E_FORMULA (Formula and calculation table)
+// 5. E_FORMULA (Formula Grid with math equation tokens)
 const formulaTable = {
-  bbox: [50, 50, 400, 200],
+  id: 'table-5-formula',
+  bbox: [50, 50, 400, 150],
   cells: [
-    { row: 0, col: 0, rawCoords: [50, 50, 200, 80], text: 'KDV Tutarı' },
-    { row: 0, col: 1, rawCoords: [200, 50, 400, 80], text: '= Matrah * %20' },
-    { row: 1, col: 0, rawCoords: [50, 80, 200, 110], text: 'Ödenecek Tutar' },
-    { row: 1, col: 1, rawCoords: [200, 80, 400, 110], text: '= Matrah + KDV Tutarı' },
-    { row: 2, col: 0, rawCoords: [50, 110, 200, 140], text: 'Toplam Tutar' },
-    { row: 2, col: 1, rawCoords: [200, 110, 400, 140], text: '= 1000 + 200 = 1200 TL' }
+    { row: 0, col: 0, rawCoords: [50, 50, 90, 80], text: 'Net Kar' },
+    { row: 0, col: 1, rawCoords: [90, 50, 110, 80], text: '=' },
+    { row: 0, col: 2, rawCoords: [110, 50, 160, 80], text: 'Brüt Kar' },
+    { row: 0, col: 3, rawCoords: [160, 50, 180, 80], text: '-' },
+    { row: 0, col: 4, rawCoords: [180, 50, 190, 80], text: '(' },
+    { row: 0, col: 5, rawCoords: [190, 50, 290, 80], text: 'Operasyonel Giderler' },
+    { row: 0, col: 6, rawCoords: [290, 50, 310, 80], text: '+' },
+    { row: 0, col: 7, rawCoords: [310, 50, 370, 80], text: 'Vergiler' },
+    { row: 0, col: 8, rawCoords: [370, 50, 390, 80], text: ')' },
+    { row: 1, col: 0, rawCoords: [50, 80, 90, 110], text: '45.000' },
+    { row: 1, col: 1, rawCoords: [90, 80, 110, 110], text: '=' },
+    { row: 1, col: 2, rawCoords: [110, 80, 160, 110], text: '75.000' },
+    { row: 1, col: 3, rawCoords: [160, 80, 180, 110], text: '-' },
+    { row: 1, col: 4, rawCoords: [180, 80, 190, 110], text: '(' },
+    { row: 1, col: 5, rawCoords: [190, 80, 290, 110], text: '20.000' },
+    { row: 1, col: 6, rawCoords: [290, 80, 310, 110], text: '+' },
+    { row: 1, col: 7, rawCoords: [310, 80, 370, 110], text: '10.000' },
+    { row: 1, col: 8, rawCoords: [370, 80, 390, 110], text: ')' }
   ]
 };
 
-const res5 = TableClassifier.processTable(formulaTable, 1, 1);
-console.log('5. E_FORMULA Classification:', res5.tableType);
+const res5 = TableClassifier.processTable(formulaTable, 1, 1, 5);
+console.log('\n5. E_FORMULA Type:', res5.tableType);
 assert.strictEqual(res5.tableType, 'E_FORMULA');
-console.log('   Sample formula reading text:', res5.items[1].fullSentenceText);
-assert.ok(res5.items[1].fullSentenceText.includes('eşittir') || res5.items[1].fullSentenceText.includes('çarpı') || res5.items[1].fullSentenceText.includes('yüzde'));
+console.log('   Formula Item 1 Text:', res5.items[0].text);
+assert.strictEqual(res5.items[0].table_order_id, 1);
+assert.strictEqual(res5.items[0].text, 'Net Kar');
 
-// Test 6: F_HYBRID_NOTE (Matrix Table with Note / Footnote at the bottom)
+// 6. F_HYBRID_NOTE (Matrix Table with * Dipnot: explanation row)
 const hybridTable = {
+  id: 'table-6-hybrid',
   bbox: [50, 50, 450, 250],
   cells: [
-    { row: 0, col: 0, rawCoords: [50, 50, 150, 90], text: 'Kategori' },
-    { row: 0, col: 1, rawCoords: [150, 50, 300, 90], text: 'Oran' },
-    { row: 0, col: 2, rawCoords: [300, 50, 450, 90], text: 'Tutar' },
-    { row: 1, col: 0, rawCoords: [50, 90, 150, 130], text: 'A Grubu' },
-    { row: 1, col: 1, rawCoords: [150, 90, 300, 130], text: '%15' },
-    { row: 1, col: 2, rawCoords: [300, 90, 450, 130], text: '1.500 TL' },
-    { row: 2, col: 0, colspan: 3, rawCoords: [50, 130, 450, 180], text: 'Not: Bu tablodaki veriler 2025 yılı ilk çeyrek TCMB gösterge kurlarına göre derlenmiştir.' }
+    { row: 0, col: 0, rawCoords: [50, 50, 150, 80], text: 'Personel Unvanı' },
+    { row: 0, col: 1, rawCoords: [150, 50, 300, 80], text: 'Günlük Yemek Ücreti' },
+    { row: 0, col: 2, rawCoords: [300, 50, 450, 80], text: 'Yol Yardımı' },
+    { row: 1, col: 0, rawCoords: [50, 80, 150, 110], text: 'Uzman' },
+    { row: 1, col: 1, rawCoords: [150, 80, 300, 110], text: '180 ₺' },
+    { row: 1, col: 2, rawCoords: [300, 80, 450, 110], text: 'Yok' },
+    { row: 2, col: 0, rawCoords: [50, 110, 150, 140], text: 'Müdür' },
+    { row: 2, col: 1, rawCoords: [150, 110, 300, 140], text: '250 ₺' },
+    { row: 2, col: 2, rawCoords: [300, 110, 450, 140], text: 'Var (Araç Tahsisi)' },
+    { row: 3, col: 0, colspan: 3, rawCoords: [50, 140, 450, 190], text: '* Dipnot: Yukarıda belirtilen yol yardımı ve yemek ücretleri 1 Ocak 2024 itibarıyla geçerli olan brüt tutarlardır. Vergi kesintileri uygulanacaktır.' }
   ]
 };
 
-const res6 = TableClassifier.processTable(hybridTable, 1, 1);
-console.log('6. F_HYBRID_NOTE Classification:', res6.tableType);
+const res6 = TableClassifier.processTable(hybridTable, 1, 1, 6);
+console.log('\n6. F_HYBRID_NOTE Type:', res6.tableType);
 assert.strictEqual(res6.tableType, 'F_HYBRID_NOTE');
-console.log('   Bottom note reading text:', res6.items[6].fullSentenceText);
-assert.ok(res6.items[6].fullSentenceText.includes('Tablo Notu'));
+const lastFootnoteItem = res6.items[res6.items.length - 1];
+console.log('   Bottom footnote Text:', lastFootnoteItem.text);
+console.log('   Footnote Table Order ID:', lastFootnoteItem.table_order_id, '| Global Sentence ID:', lastFootnoteItem.sentence_id);
+assert.ok(lastFootnoteItem.text.includes('* Dipnot:'));
 
-// Test 7: Full BBoxParser.parse Integration
-console.log('\n7. End-to-End BBoxParser.parse Test with Tables:');
-const fullDoc = [
+// 7. Test Raw JSON with 'category: Table' or 'type: table' (Extracts individual cells & assigns table_type)
+console.log('\n7. Testing Raw JSON containing Category "Table":');
+const rawJsonDoc = [
+  { page: 1, category: 'TITLE', bbox: [50, 20, 500, 45], text: 'Finansal Tablo Raporu' },
   {
     page: 1,
-    category: 'Title',
-    rawCoords: [50, 20, 500, 45],
-    text: 'BÖLÜM 1: FİNANSAL TABLOLAR VE VERİLER'
+    category: 'TABLE',
+    bbox: [50, 50, 450, 200],
+    text: "Şube Adı\t2023 Q1 Gelir\t2023 Q2 Gelir\nKadıköy\t120.000\t145.000\nBeşiktaş\t115.000\t125.000"
   },
-  matrixTable,
-  {
-    page: 1,
-    category: 'Plain Text',
-    rawCoords: [50, 220, 500, 250],
-    text: 'Yukarıdaki tabloda belirtilen tutarlar vadesi geldiğinde banka hesabına aktarılacaktır.'
-  }
+  { page: 1, category: 'PARAGRAPH', bbox: [50, 220, 500, 250], text: 'Yukarıdaki tablo incelendiğinde büyüme görülmektedir.' }
 ];
 
-const parsedDoc = BBoxParser.parse(fullDoc);
-console.log('   Parsed total items:', parsedDoc.length);
-assert.ok(parsedDoc.length >= 10);
-console.log('   Title text:', parsedDoc[0].text);
-console.log('   First table item text:', parsedDoc[1].text);
-console.log('   First table item accessible sentence:', parsedDoc[1].fullSentenceText);
+const parsedDoc = BBoxParser.parse(rawJsonDoc);
+console.log('   Parsed items count:', parsedDoc.length);
+assert.strictEqual(parsedDoc.length, 11);
+const tableCells = parsedDoc.filter(it => it.table_id || it.table_type || it.table_order_id);
+console.log('   Extracted individual table cells:', tableCells.length);
+assert.strictEqual(tableCells.length, 9);
+console.log('   Assigned Table Type:', tableCells[0].table_type);
+assert.strictEqual(tableCells[0].table_type, 'A_MATRIX');
+console.log('   First Cell BBox:', tableCells[0].rawBox);
+console.log('   First Cell Text:', tableCells[0].text);
 
-console.log('\n--- ALL 6 TABLE CLASSIFICATION & READING ORDER TESTS PASSED PERFECTLY! ---');
+console.log('\n=== ALL 7 TABLE CLASSIFICATION & DUAL READING ORDER TESTS PASSED PERFECTLY! ===');
+

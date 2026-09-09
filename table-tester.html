@@ -1,0 +1,754 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Tablo Okuma Sırası Laboratuvarı (Table Reading Order Lab)</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+  <style>
+    :root {
+      --bg-main: #090d16;
+      --bg-surface: #0f172a;
+      --bg-card: #1e293b;
+      --bg-hover: #334155;
+      --border-color: rgba(255, 255, 255, 0.1);
+      --border-active: #38bdf8;
+      --text-main: #f8fafc;
+      --text-muted: #94a3b8;
+      --primary: #0284c7;
+      --primary-hover: #0369a1;
+      --accent: #38bdf8;
+      --success: #10b981;
+      --warning: #f59e0b;
+      --danger: #ef4444;
+      --active-speaking: #facc15;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: 'Inter', sans-serif;
+      background: var(--bg-main);
+      color: var(--text-main);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      overflow-x: hidden;
+    }
+
+    /* Top Navigation Header */
+    header.lab-topbar {
+      height: 60px;
+      background: var(--bg-surface);
+      border-bottom: 1px solid var(--border-color);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 24px;
+      z-index: 50;
+      position: sticky;
+      top: 0;
+    }
+
+    .topbar-brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      font-weight: 700;
+      font-size: 1.1rem;
+      color: var(--text-main);
+      text-decoration: none;
+    }
+
+    .topbar-brand i {
+      color: var(--accent);
+      font-size: 1.3rem;
+    }
+
+    .topbar-nav {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .topbar-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      background: var(--bg-card);
+      color: var(--text-main);
+      border: 1px solid var(--border-color);
+      border-radius: 8px;
+      padding: 8px 14px;
+      font-size: 0.85rem;
+      font-weight: 500;
+      cursor: pointer;
+      text-decoration: none;
+      transition: all 0.2s ease;
+    }
+
+    .topbar-btn:hover {
+      background: var(--bg-hover);
+      border-color: var(--border-active);
+    }
+
+    .topbar-btn.primary {
+      background: var(--primary);
+      border-color: var(--accent);
+      color: #fff;
+    }
+
+    .topbar-btn.primary:hover {
+      background: var(--primary-hover);
+    }
+
+    /* Main Container */
+    .lab-container {
+      display: flex;
+      flex: 1;
+      height: calc(100vh - 60px);
+      overflow: hidden;
+    }
+
+    /* Left Sidebar - Table Selector & Samples */
+    aside.lab-sidebar-left {
+      width: 320px;
+      background: var(--bg-surface);
+      border-right: 1px solid var(--border-color);
+      display: flex;
+      flex-direction: column;
+      overflow-y: auto;
+    }
+
+    .sidebar-block {
+      padding: 18px;
+      border-bottom: 1px solid var(--border-color);
+    }
+
+    .block-title {
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--text-muted);
+      margin-bottom: 12px;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .sample-table-list {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .sample-table-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border-color);
+      border-radius: 10px;
+      padding: 12px;
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+
+    .sample-table-card:hover {
+      background: var(--bg-hover);
+      border-color: rgba(56, 189, 248, 0.4);
+      transform: translateY(-1px);
+    }
+
+    .sample-table-card.active {
+      background: rgba(2, 132, 199, 0.15);
+      border-color: var(--accent);
+      box-shadow: 0 0 12px rgba(56, 189, 248, 0.2);
+    }
+
+    .card-badge-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 6px;
+    }
+
+    .table-type-tag {
+      font-size: 0.68rem;
+      font-weight: 700;
+      padding: 2px 8px;
+      border-radius: 12px;
+      letter-spacing: 0.4px;
+    }
+
+    .tag-a { background: #0284c7; color: #fff; }
+    .tag-b { background: #10b981; color: #fff; }
+    .tag-c { background: #8b5cf6; color: #fff; }
+    .tag-d { background: #ec4899; color: #fff; }
+    .tag-e { background: #f59e0b; color: #fff; }
+    .tag-f { background: #06b6d4; color: #fff; }
+
+    .card-name {
+      font-size: 0.9rem;
+      font-weight: 600;
+      color: var(--text-main);
+      margin-bottom: 4px;
+    }
+
+    .card-desc {
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      line-height: 1.4;
+    }
+
+    /* Center Playground Area */
+    main.lab-center {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      background: var(--bg-main);
+      overflow-y: auto;
+      position: relative;
+    }
+
+    /* Interactive Top Control Bar */
+    .play-controls-bar {
+      padding: 14px 24px;
+      background: rgba(15, 23, 42, 0.8);
+      backdrop-filter: blur(8px);
+      border-bottom: 1px solid var(--border-color);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      position: sticky;
+      top: 0;
+      z-index: 30;
+    }
+
+    .play-controls-left {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .tts-main-btn {
+      background: var(--primary);
+      color: #fff;
+      border: 1px solid var(--accent);
+      border-radius: 8px;
+      padding: 8px 18px;
+      font-weight: 600;
+      font-size: 0.9rem;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      transition: all 0.2s ease;
+    }
+
+    .tts-main-btn:hover {
+      background: var(--primary-hover);
+      box-shadow: 0 0 14px rgba(56, 189, 248, 0.4);
+    }
+
+    .tts-main-btn.playing {
+      background: rgba(234, 179, 8, 0.2);
+      color: #fde047;
+      border-color: #eab308;
+    }
+
+    .play-btn-sub {
+      background: var(--bg-card);
+      color: var(--text-main);
+      border: 1px solid var(--border-color);
+      border-radius: 8px;
+      padding: 8px 12px;
+      cursor: pointer;
+      font-size: 0.85rem;
+      transition: all 0.2s;
+    }
+
+    .play-btn-sub:hover {
+      background: var(--bg-hover);
+      border-color: var(--accent);
+    }
+
+    .trajectory-toggle-wrap {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 0.82rem;
+      color: var(--text-muted);
+      cursor: pointer;
+    }
+
+    .trajectory-toggle-wrap input[type="checkbox"] {
+      cursor: pointer;
+      accent-color: var(--accent);
+      width: 16px;
+      height: 16px;
+    }
+
+    /* Table Canvas Card */
+    .table-view-container {
+      padding: 28px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: flex-start;
+      min-height: 100%;
+    }
+
+    .table-stage-card {
+      background: var(--bg-surface);
+      border: 1px solid var(--border-color);
+      border-radius: 16px;
+      padding: 24px;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4);
+      width: 100%;
+      max-width: 960px;
+      position: relative;
+    }
+
+    .table-stage-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 20px;
+      padding-bottom: 14px;
+      border-bottom: 1px solid var(--border-color);
+    }
+
+    .table-stage-title-wrap {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .stage-title {
+      font-size: 1.25rem;
+      font-weight: 700;
+      color: var(--text-main);
+    }
+
+    .stage-meta {
+      font-size: 0.8rem;
+      color: var(--text-muted);
+      margin-top: 4px;
+    }
+
+    /* Table Type Selector Switcher Dropdown in Canvas */
+    .type-switcher-wrap {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .type-select-input {
+      background: var(--bg-card);
+      color: var(--text-main);
+      border: 1px solid var(--border-color);
+      border-radius: 8px;
+      padding: 7px 12px;
+      font-size: 0.82rem;
+      font-weight: 600;
+      cursor: pointer;
+      outline: none;
+    }
+
+    .type-select-input:focus {
+      border-color: var(--accent);
+    }
+
+    /* Rendered HTML Grid Table with BBox Badges */
+    .table-canvas-wrap {
+      position: relative;
+      margin-top: 10px;
+      border-radius: 10px;
+      overflow: hidden;
+      border: 1px solid var(--border-color);
+      background: var(--bg-card);
+    }
+
+    /* SVG Trajectory Layer */
+    svg.trajectory-svg {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+      z-index: 20;
+    }
+
+    .trajectory-path {
+      stroke: var(--accent);
+      stroke-width: 2.5;
+      stroke-dasharray: 6 4;
+      fill: none;
+      animation: dashMove 1.5s linear infinite;
+    }
+
+    @keyframes dashMove {
+      from { stroke-dashoffset: 20; }
+      to { stroke-dashoffset: 0; }
+    }
+
+    /* Visual Table Styles */
+    table.rendered-lab-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.9rem;
+      position: relative;
+      z-index: 10;
+    }
+
+    table.rendered-lab-table th,
+    table.rendered-lab-table td {
+      border: 1px solid var(--border-color);
+      padding: 14px 16px;
+      text-align: left;
+      position: relative;
+      transition: all 0.2s ease;
+    }
+
+    table.rendered-lab-table th {
+      background: rgba(30, 41, 59, 0.9);
+      color: #38bdf8;
+      font-weight: 600;
+    }
+
+    table.rendered-lab-table td {
+      background: rgba(15, 23, 42, 0.6);
+      color: #e2e8f0;
+    }
+
+    /* Order Badge on Cell */
+    .cell-order-badge {
+      position: absolute;
+      top: 4px;
+      right: 4px;
+      background: var(--primary);
+      color: #fff;
+      font-size: 0.65rem;
+      font-weight: 700;
+      padding: 2px 6px;
+      border-radius: 10px;
+      box-shadow: 0 1px 4px rgba(0, 0, 0, 0.4);
+      z-index: 15;
+      font-family: 'JetBrains Mono', monospace;
+    }
+
+    /* Active Speaking Cell Highlight */
+    .cell-speaking-active {
+      background: rgba(250, 204, 21, 0.25) !important;
+      outline: 2.5px solid var(--active-speaking) !important;
+      z-index: 25 !important;
+      box-shadow: 0 0 16px rgba(250, 204, 21, 0.6) !important;
+      animation: pulseCell 1.2s infinite alternate;
+    }
+
+    @keyframes pulseCell {
+      from { background: rgba(250, 204, 21, 0.2); }
+      to { background: rgba(250, 204, 21, 0.45); }
+    }
+
+    /* Footnote Block */
+    .lab-footnote-box {
+      margin-top: 14px;
+      padding: 12px 16px;
+      background: rgba(2, 132, 199, 0.08);
+      border-left: 3px solid var(--accent);
+      border-radius: 6px;
+      font-size: 0.82rem;
+      color: var(--text-muted);
+      position: relative;
+    }
+
+    /* Right Sidebar - Reading Order Inspection Stream */
+    aside.lab-sidebar-right {
+      width: 360px;
+      background: var(--bg-surface);
+      border-left: 1px solid var(--border-color);
+      display: flex;
+      flex-direction: column;
+      overflow-y: auto;
+    }
+
+    .order-step-list {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .order-step-item {
+      background: var(--bg-card);
+      border: 1px solid var(--border-color);
+      border-radius: 8px;
+      padding: 10px 12px;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+    }
+
+    .order-step-item:hover {
+      background: var(--bg-hover);
+      border-color: var(--border-active);
+    }
+
+    .order-step-item.active {
+      background: rgba(250, 204, 21, 0.15);
+      border-color: var(--active-speaking);
+      box-shadow: 0 0 10px rgba(250, 204, 21, 0.2);
+    }
+
+    .step-number {
+      background: var(--primary);
+      color: #fff;
+      font-weight: 700;
+      font-size: 0.72rem;
+      padding: 3px 7px;
+      border-radius: 6px;
+      font-family: 'JetBrains Mono', monospace;
+      flex-shrink: 0;
+    }
+
+    .order-step-item.active .step-number {
+      background: var(--active-speaking);
+      color: #000;
+    }
+
+    .step-content {
+      flex: 1;
+      overflow: hidden;
+    }
+
+    .step-spoken-text {
+      font-size: 0.82rem;
+      color: var(--text-main);
+      font-weight: 500;
+      margin-bottom: 2px;
+      word-break: break-word;
+    }
+
+    .step-original-tag {
+      font-size: 0.7rem;
+      color: var(--text-muted);
+      font-family: 'JetBrains Mono', monospace;
+    }
+
+    /* Modal for Custom JSON table input */
+    .lab-modal-backdrop {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.75);
+      backdrop-filter: blur(4px);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      z-index: 100;
+    }
+
+    .lab-modal-card {
+      background: var(--bg-surface);
+      border: 1px solid var(--border-color);
+      border-radius: 16px;
+      width: 90%;
+      max-width: 680px;
+      padding: 24px;
+      box-shadow: 0 20px 40px rgba(0, 0, 0, 0.6);
+    }
+
+    .modal-textarea {
+      width: 100%;
+      height: 240px;
+      background: var(--bg-main);
+      color: var(--text-main);
+      border: 1px solid var(--border-color);
+      border-radius: 8px;
+      padding: 12px;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.8rem;
+      resize: vertical;
+      margin: 14px 0;
+      outline: none;
+    }
+
+    .modal-textarea:focus {
+      border-color: var(--accent);
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Top Navigation Header -->
+  <header class="lab-topbar">
+    <div style="display:flex; align-items:center; gap:16px;">
+      <a href="index.html" class="topbar-brand">
+        <i class="fa-solid fa-table-cells-large"></i>
+        <span>Tablo Okuma Sırası Laboratuvarı</span>
+      </a>
+      <span style="font-size:0.75rem; background:rgba(56,189,248,0.15); color:#38bdf8; padding:3px 10px; border-radius:20px; font-weight:600;">
+        Özerk Test Ortamı
+      </span>
+    </div>
+
+    <div class="topbar-nav">
+      <button id="custom-json-btn" class="topbar-btn">
+        <i class="fa-solid fa-code"></i> Kendi Tablo JSON'unu Yükle
+      </button>
+      <a href="index.html" class="topbar-btn primary">
+        <i class="fa-solid fa-arrow-left"></i> Ana Editöre Dön
+      </a>
+    </div>
+  </header>
+
+  <!-- Workspace Container -->
+  <div class="lab-container">
+    
+    <!-- Left Sidebar: Sample Tables -->
+    <aside class="lab-sidebar-left">
+      <div class="sidebar-block">
+        <div class="block-title">
+          <i class="fa-solid fa-layer-group"></i> 6 Tablo Tipi Örnekleri
+        </div>
+        <div id="sample-tables-container" class="sample-table-list">
+          <!-- Populated by JS -->
+        </div>
+      </div>
+
+      <div class="sidebar-block" style="flex:1;">
+        <div class="block-title">
+          <i class="fa-solid fa-circle-info"></i> 3 Altın Kural Özeti
+        </div>
+        <div style="font-size:0.78rem; color:var(--text-muted); line-height:1.6; display:flex; flex-direction:column; gap:10px;">
+          <div>
+            <strong style="color:#38bdf8;">1. Gerçek Tablolar (A, D, E):</strong> Satır/sütun başlığı her zaman hücre değeriyle birlikte dinamik anons edilir.
+          </div>
+          <div>
+            <strong style="color:#8b5cf6;">2. Sahte Tablolar (C):</strong> Tablo yapısı tamamen kaldırılır; sütun sütun serbest paragraf akışı oluşturulur.
+          </div>
+          <div>
+            <strong style="color:#06b6d4;">3. Dipnotlar (F):</strong> Ana veri bittikten sonra en son bağımsız ve işaretli cümle olarak okunur.
+          </div>
+        </div>
+      </div>
+    </aside>
+
+    <!-- Center Playground -->
+    <main class="lab-center">
+      <!-- Play Controls Bar -->
+      <div class="play-controls-bar">
+        <div class="play-controls-left">
+          <button id="tts-play-btn" class="tts-main-btn">
+            <i class="fa-solid fa-play"></i> <span>Sırayla Oku</span>
+          </button>
+          <button id="tts-prev-btn" class="play-btn-sub" title="Önceki Hücre">
+            <i class="fa-solid fa-backward-step"></i>
+          </button>
+          <button id="tts-next-btn" class="play-btn-sub" title="Sonraki Hücre">
+            <i class="fa-solid fa-forward-step"></i>
+          </button>
+          <button id="tts-stop-btn" class="play-btn-sub" title="Durdur">
+            <i class="fa-solid fa-stop"></i>
+          </button>
+          
+          <div style="display:flex; align-items:center; gap:6px; background:var(--bg-card); padding:4px 8px; border-radius:8px; border:1px solid var(--border-color); font-size:0.8rem;">
+            <i class="fa-solid fa-gauge-high" style="color:var(--accent);"></i>
+            <select id="tts-speed-select" style="background:transparent; color:#fff; border:none; outline:none; font-weight:600; cursor:pointer;">
+              <option value="0.75">0.75x</option>
+              <option value="1.0" selected>1.0x</option>
+              <option value="1.25">1.25x</option>
+              <option value="1.5">1.5x</option>
+            </select>
+          </div>
+        </div>
+
+        <div style="display:flex; align-items:center; gap:16px;">
+          <label class="trajectory-toggle-wrap">
+            <input type="checkbox" id="show-trajectory-checkbox" checked>
+            <span>Okuma Yörüngesini Çiz (Trajectory)</span>
+          </label>
+        </div>
+      </div>
+
+      <!-- Table View Stage -->
+      <div class="table-view-container">
+        <div class="table-stage-card">
+          <div class="table-stage-header">
+            <div class="table-stage-title-wrap">
+              <span id="stage-badge" class="table-type-tag tag-a">A_MATRIX</span>
+              <div>
+                <h2 id="stage-title" class="stage-title">Elektrik &amp; Su Gider Cetveli</h2>
+                <div id="stage-meta" class="stage-meta">4 Satır × 3 Sütun • Klasik Matris Tablo</div>
+              </div>
+            </div>
+
+            <!-- Dynamic Table Type Switcher -->
+            <div class="type-switcher-wrap">
+              <label style="font-size:0.75rem; color:var(--text-muted); font-weight:600;">Tipi Değiştir:</label>
+              <select id="stage-type-select" class="type-select-input">
+                <option value="A_MATRIX">🔢 A — Klasik Matris (Z-Yolu)</option>
+                <option value="B_KEY_VALUE">🏷️ B — Etiket : Değer / Form</option>
+                <option value="C_PARALLEL_TEXT">📄 C — Paralel Metin (Sütun Bazlı)</option>
+                <option value="D_MERGED_CELLS">🔀 D — Birleşik Hücreli / Hiyerarşik</option>
+                <option value="E_FORMULA">🧮 E — Formül / Matematiksel</option>
+                <option value="F_HYBRID_NOTE">📝 F — Dipnotlu Hibrit Tablo</option>
+              </select>
+            </div>
+          </div>
+
+          <!-- Dynamic Rendered Table + SVG Layer -->
+          <div class="table-canvas-wrap" id="table-canvas-wrap">
+            <svg class="trajectory-svg" id="trajectory-svg"></svg>
+            <div id="rendered-table-container">
+              <!-- Rendered table injected here -->
+            </div>
+          </div>
+
+          <!-- Footnote Block if applicable -->
+          <div id="stage-footnote-container" style="display:none;"></div>
+        </div>
+      </div>
+    </main>
+
+    <!-- Right Sidebar: Step-by-Step Reading Queue -->
+    <aside class="lab-sidebar-right">
+      <div class="sidebar-block">
+        <div class="block-title">
+          <i class="fa-solid fa-list-ol"></i> Okuma Sırası Adımları (<span id="queue-count">0</span>)
+        </div>
+        <div id="order-queue-container" class="order-step-list">
+          <!-- Queue items rendered here -->
+        </div>
+      </div>
+    </aside>
+
+  </div>
+
+  <!-- Custom Table JSON Modal -->
+  <div id="custom-json-modal" class="lab-modal-backdrop">
+    <div class="lab-modal-card">
+      <h3 style="font-size:1.1rem; font-weight:700; margin-bottom:6px;">Kendi Tablo Verinizi Yapıştırın</h3>
+      <p style="font-size:0.8rem; color:var(--text-muted);">Hücre dizisi içeren JSON yapısını yapıştırarak anında test edin:</p>
+      <textarea id="custom-json-textarea" class="modal-textarea" placeholder='{\n  "table_id": "custom-1",\n  "forced_type": "A_MATRIX",\n  "cells": [\n    { "row": 0, "col": 0, "text": "Başlık 1" },\n    { "row": 0, "col": 1, "text": "Başlık 2" }\n  ]\n}'></textarea>
+      <div style="display:flex; justify-content:flex-end; gap:10px;">
+        <button id="modal-cancel-btn" class="topbar-btn">İptal</button>
+        <button id="modal-load-btn" class="topbar-btn primary">Tabloyu Yükle &amp; Test Et</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Scripts -->
+  <script src="js/table-classifier.js?v=145.0"></script>
+  <script src="js/table-tester.js?v=145.0"></script>
+</body>
+</html>

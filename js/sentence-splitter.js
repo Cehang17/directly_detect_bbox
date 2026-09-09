@@ -225,110 +225,6 @@ class SentenceSplitter {
   }
 
   /**
-   * Preprocess lines before sentence splitting:
-   *  - Early comma rule: line ends with ',' or ';' and width < 90% of ref width -> becomes '.'
-   *  - Bullet rule: line not ending with .!? followed by bullet -> becomes '.'
-   *  - Header rule: line starting with header & ':' is split
-   */
-  static preprocessLines(lines, ratioThreshold = 0.9, headersForPage = []) {
-    if (!lines || lines.length === 0) return { text: "", processedLines: [] };
-
-    // Reference width: maximum line width
-    let refWidth = 1;
-    lines.forEach(ln => {
-      const rect = this._getRectFromPolygonOrBox(ln.bbox || ln.rawCoords);
-      if (rect) {
-        const w = rect[2] - rect[0];
-        if (w > refWidth) refWidth = w;
-      }
-    });
-
-    const processed = [];
-    const processedLines = [];
-    const n = lines.length;
-
-    for (let i = 0; i < n; i++) {
-      const ln = lines[i];
-      let txt = (ln.text || "").trimEnd();
-      let lnBBox = ln.bbox || ln.rawCoords;
-
-      // 0) Header rule: check for "Madde X:" or header match with ':'
-      const didSplit = this._matchHeaderAndSplit(txt, headersForPage);
-      if (didSplit.split) {
-        // If previous line didn't end with punctuation, close it
-        if (processed.length > 0) {
-          let last = processed[processed.length - 1].trimEnd();
-          if (!/[.!?]$/.test(last)) {
-            last = last.replace(/[,:;\s]+$/, "") + ".";
-            processed[processed.length - 1] = last;
-            if (processedLines.length > 0) {
-              processedLines[processedLines.length - 1].text = last;
-            }
-          }
-        }
-
-        let leftNorm = didSplit.leftRaw.trim();
-        if (/[,;]\s*$/.test(leftNorm)) {
-          leftNorm = leftNorm.replace(/[,;]+\s*$/, ":");
-        }
-        if (!/[:：]\s*$/.test(leftNorm)) {
-          leftNorm += ":";
-        }
-        leftNorm += "."; // Period for NLP splitting
-
-        processed.push(leftNorm);
-
-        // Split bbox horizontally based on colon position
-        const splitRatio = Math.max(0.1, Math.min(0.9, (didSplit.sepIdx + 1) / Math.max(txt.length, 1)));
-        const rect = this._getRectFromPolygonOrBox(lnBBox);
-        if (rect) {
-          const [xMin, yMin, xMax, yMax] = rect;
-          const splitX = xMin + (xMax - xMin) * splitRatio;
-          const leftBox = [xMin, yMin, splitX, yMax];
-          const rightBox = [splitX, yMin, xMax, yMax];
-          processedLines.push({ text: leftNorm, bbox: leftBox });
-          lnBBox = rightBox;
-        } else {
-          processedLines.push({ text: leftNorm, bbox: lnBBox });
-        }
-
-        txt = didSplit.rightRaw;
-      }
-
-      // 1) Early comma / semicolon rule
-      if (/[,;]$/.test(txt) && lnBBox) {
-        const rect = this._getRectFromPolygonOrBox(lnBBox);
-        if (rect) {
-          const lineWidth = rect[2] - rect[0];
-          const upperRatio = (txt.match(/[A-ZÇĞİÖŞÜ]/g) || []).length / Math.max(txt.length, 1);
-          const adjustedWidth = lineWidth * (1 + upperRatio * 0.2);
-
-          if (adjustedWidth / refWidth < ratioThreshold) {
-            txt = txt.slice(0, -1) + '.';
-          }
-        }
-      }
-
-      // 2) Bullet rule
-      if (i < n - 1) {
-        const nextTxt = (lines[i + 1].text || "").trimStart();
-        const nextStartsWithBullet = this.BULLET_CHARS.some(b => nextTxt.startsWith(b));
-        if (!/[.!?]$/.test(txt) && nextStartsWithBullet) {
-          txt += '.';
-        }
-      }
-
-      processed.push(txt);
-      processedLines.push({ text: txt, bbox: lnBBox });
-    }
-
-    return {
-      text: processed.join(' '),
-      processedLines: processedLines
-    };
-  }
-
-  /**
    * Helper to check header matching and colon split
    */
   static _matchHeaderAndSplit(lineText, headersForPage = []) {
@@ -816,7 +712,7 @@ class SentenceSplitter {
     if (c.includes('abandon') || c.includes('figure') || c.includes('watermark') || c.includes('background') || c.includes('footer')) {
       return 'Abandon';
     }
-    if (c.includes('table')) {
+    if (c.includes('table') || c.includes('tablo') || c.includes('tabular') || c.includes('matrix') || c.includes('grid') || c.includes('form') || c.includes('key value')) {
       return 'Table';
     }
     if (c.includes('title') || c.includes('section header') || c.includes('heading') || c.includes('header') || c.includes('caption')) {
@@ -936,6 +832,77 @@ class SentenceSplitter {
       const block = currentTextBlock;
       currentTextBlock = [];
 
+      // Safeguard: Check if this block is actually a key-value form (multiple lines with colons)
+      const colonCount = block.filter(l => {
+        const t = (l.text || '').trim();
+        return t.includes(':') && !t.startsWith(':');
+      }).length;
+
+      if (block.length >= 2 && colonCount >= 2 && (colonCount / block.length >= 0.3)) {
+        for (const line of block) {
+          const lText = (line.text || '').trim();
+          const lBox = line.bbox || line.rawCoords;
+          if (!lText || !lBox) continue;
+
+          // Split line into Label and Value if colon is present
+          if (lText.includes(':') && !lText.startsWith(':')) {
+            const colonIdx = lText.indexOf(':');
+            const labelText = lText.substring(0, colonIdx + 1).trim();
+            const valText = lText.substring(colonIdx + 1).trim();
+
+            if (labelText && valText) {
+              const totalW = Math.max(lBox[2] - lBox[0], 20);
+              const ratio = Math.max(0.2, Math.min(0.8, (labelText.length + 1) / (labelText.length + valText.length + 1)));
+              const splitX = lBox[0] + totalW * ratio;
+
+              const sNum1 = currentSentenceNum++;
+              finalSentenceBBoxes.push({
+                id: `bbox-p${pageNum}-s${sNum1}`,
+                id_display: sNum1,
+                sentence_id: sNum1,
+                page: pageNum,
+                text: labelText,
+                fullSentenceText: labelText,
+                bbox: [Math.round(lBox[0]), Math.round(lBox[1]), Math.round(splitX), Math.round(lBox[3])],
+                rawCoords: [Math.round(lBox[0]), Math.round(lBox[1]), Math.round(splitX), Math.round(lBox[3])],
+                category: 'Table Cell',
+                isTableCell: true
+              });
+
+              const sNum2 = currentSentenceNum++;
+              finalSentenceBBoxes.push({
+                id: `bbox-p${pageNum}-s${sNum2}`,
+                id_display: sNum2,
+                sentence_id: sNum2,
+                page: pageNum,
+                text: valText,
+                fullSentenceText: valText,
+                bbox: [Math.round(splitX), Math.round(lBox[1]), Math.round(lBox[2]), Math.round(lBox[3])],
+                rawCoords: [Math.round(splitX), Math.round(lBox[1]), Math.round(lBox[2]), Math.round(lBox[3])],
+                category: 'Table Cell',
+                isTableCell: true
+              });
+              continue;
+            }
+          }
+
+          const sNum = currentSentenceNum++;
+          finalSentenceBBoxes.push({
+            id: `bbox-p${pageNum}-s${sNum}`,
+            id_display: sNum,
+            sentence_id: sNum,
+            page: pageNum,
+            text: lText,
+            fullSentenceText: lText,
+            bbox: [Math.round(lBox[0]), Math.round(lBox[1]), Math.round(lBox[2]), Math.round(lBox[3])],
+            rawCoords: [Math.round(lBox[0]), Math.round(lBox[1]), Math.round(lBox[2]), Math.round(lBox[3])],
+            category: 'Table Cell',
+            isTableCell: true
+          });
+        }
+        return;
+      }
+
       const { text: preprocessedText, processedLines } = this.preprocessLines(block, 0.9, []);
       if (!preprocessedText.trim()) return;
 
@@ -1010,22 +977,34 @@ class SentenceSplitter {
     };
 
     let currentTableBlock = [];
+    let tableIndexCounter = 1;
 
     const flushTableBlock = () => {
       if (currentTableBlock.length === 0) return;
       const tBlock = currentTableBlock;
       currentTableBlock = [];
+      const tblIdx = tableIndexCounter++;
+      const currentTableId = `table-p${pageNum}-${tblIdx}`;
 
       const Classifier = (typeof TableClassifier !== 'undefined')
         ? TableClassifier
         : (typeof require !== 'undefined' ? (() => { try { return require('./table-classifier.js'); } catch(e) { return null; } })() : null);
 
       if (Classifier && typeof Classifier.processTable === 'function') {
-        const { items: tableItems, nextSentenceNumber } = Classifier.processTable({ cells: tBlock }, pageNum, currentSentenceNum);
+        const { items: tableItems, nextSentenceNumber } = Classifier.processTable(
+          { id: currentTableId, table_id: currentTableId, cells: tBlock },
+          pageNum,
+          currentSentenceNum,
+          tblIdx
+        );
         if (tableItems && tableItems.length > 0) {
           currentSentenceNum = nextSentenceNumber;
           tableItems.forEach(it => {
-            finalSentenceBBoxes.push(it);
+            finalSentenceBBoxes.push({
+              ...it,
+              table_id: currentTableId,
+              layout_id: currentTableId
+            });
           });
           return;
         }
@@ -1034,7 +1013,7 @@ class SentenceSplitter {
       tBlock.forEach(item => {
         const sNum = currentSentenceNum++;
         finalSentenceBBoxes.push({
-          id: `bbox-p${pageNum}-t${sNum}`,
+          id: `bbox-p${pageNum}-t${tblIdx}-${sNum}`,
           page: pageNum,
           sentence_id: sNum,
           id_display: sNum,
@@ -1044,7 +1023,9 @@ class SentenceSplitter {
           rawCoords: item.rawCoords,
           coordType: 'abs_points',
           category: 'Table Cell',
-          confidence: 0.99
+          confidence: 0.99,
+          table_id: currentTableId,
+          layout_id: currentTableId
         });
       });
     };
@@ -1157,10 +1138,15 @@ class SentenceSplitter {
     // Numerical page ordering (Page 1 -> Page 2 -> Page 3 ...)
     const sortedPages = Array.from(itemsByPage.keys()).sort((a, b) => Number(a) - Number(b));
     for (const pageNum of sortedPages) {
-      const pageItems = itemsByPage.get(pageNum);
+      const pageItems = itemsByPage.get(pageNum) || [];
       const res = this.processPageLinesIntoSentences(pageItems, pageNum, currentSentenceNum);
-      allSegmented.push(...res.items);
-      currentSentenceNum = res.nextSentenceNumber;
+      if (res && Array.isArray(res.items)) {
+        allSegmented.push(...res.items);
+        currentSentenceNum = res.nextSentenceNumber || (currentSentenceNum + res.items.length);
+      } else if (Array.isArray(res)) {
+        allSegmented.push(...res);
+        currentSentenceNum += res.length;
+      }
     }
 
     return allSegmented;

@@ -1,47 +1,30 @@
-# PDF & JSON Bounding Box Inspector & NLP Cümle Ayrıştırma Editörü
+# 📑 PDF & JSON Bounding Box Inspector & NLP Cümle Editörü
 
-PDF belgeleri üzerinde JSON formatındaki sınırlayıcı kutuları (**Bounding Box**) görselleştiren, Türkçe ve çok dilli **NLP kurallarıyla cümle segmentasyonu** gerçekleştiren, kutuları sürükleyip boyutlandırarak düzenlemeye ve dışa aktarmaya olanak tanıyan etkileşimli web uygulaması.
+PDF belgeleri üzerindeki OCR ve layout verilerini görselleştiren, Türkçe NLP kurallarıyla cümle segmentasyonu yapan, 6 farklı tablo tipine göre akıllı okuma sırası belirleyen ve BBox düzenlemelerine imkan tanıyan web tabanlı etkileşimli editör.
 
 ---
 
-## 🚀 Öne Çıkan Özellikler
+## 🚀 Temel Özellikler
 
-### 1. 🧠 Gelişmiş NLP Cümle Ayrıştırma Motoru (`sentence-splitter.js`)
-- **Türkçe Kısaltma & İstisna Yönetimi:** `vb.`, `vs.`, `örn.`, `sn.`, `bkz.`, `vd.`, `dr.`, `av.`, `cad.`, `sk.`, `A.Ş.`, `T.C.`, `No.`, `Mah.`, madde başlıkları (`Madde 16:`, vb.) ve sayısal nokta dizilimleri (`15.`, `5.`) yanlış cümle sonu olarak bölünmez.
-- **Çok Satırlı Cümleler için Oransal BBox:** Tek bir cümle birden fazla satıra yayıldığında her satır için karakter oranına göre ayrı BBox üretilir ancak tüm satırlar **aynı `sentence_id` ve rozet numarasını** paylaşır.
-- **Madde İmleri & Başlık Ayrımı:** Madde imleri (`•`, `-`, `▪`, `a)`, `b)`) oransal olarak ayıklanır, başlıklar ve iki nokta ile biten ibareler bağımsız cümle olarak konumlandırılır.
+- **🧠 Akıllı Türkçe NLP Cümle Ayrıştırma:**
+  - `vb.`, `sn.`, `Madde 16:` gibi kısaltma ve istisnaları bölmez.
+  - Birden fazla satıra yayılan cümlelerin tüm satır kutularına **aynı `sentence_id`**'yi atar.
 
-### 2. 📊 Tablo Sınıflandırma ve Erişilebilir Okuma Sırası (`table-classifier.js`)
-Sistem, PDF belgelerindeki tabloları yalnızca standart $N \times M$ grid olarak ele almak yerine, yapısal özelliklerini analiz ederek **6 temel kategoride** sınıflandırır ve ekran okuyucu/TTS dostu anlamsal okuma sırasına dönüştürür:
-- **`A_MATRIX` (Matris Tablo):** Satır ve sütun başlıklarının kesişimini ilişkilendirerek okur (`"[Ocak Ayı] - [Elektrik Gideri]: 1.250 TL"`).
-- **`B_KEY_VALUE` (Form / Anahtar-Değer):** Soldan sağa etiket ve değer çifti olarak okur (`"[Müşteri Adı]: Hasan Yılmaz"`).
-- **`C_PARALLEL_TEXT` (Paralel Metin / Sahte Tablo):** Yanlış tespit edilmiş yan yana gazete sütunlarında tablo yapısını kaldırır; sütun bazında yukarıdan aşağıya standart paragraf akışıyla okur.
-- **`D_MERGED_CELLS` (Birleştirilmiş Hücreli Tablo):** `rowspan` ve `colspan` yayımlı hiyerarşik başlıkları ilişkilendirerek okur (`"[2025 Yılı] altındaki [Gelir]: 50.000 TL"`).
-- **`E_FORMULA` (Formül / Hesaplama Cetveli):** Matematiksel eşitlikleri ve operatörleri seslendirilebilir metne dönüştürür (`"KDV Tutarı = Matrah çarpı yüzde 20 eşittir 200 TL"`).
-- **`F_HYBRID_NOTE` (Hibrit / Dipnotlu Tablo):** Ana tabloyu tamamladıktan sonra altındaki açıklama ve dipnot bloklarını ayrık olarak okur (`"Tablo Notu: Veriler TCMB kurlarına göredir."`).
+- **📊 6 Tipli Tablo Sınıflandırma & Okuma Sırası Motoru:**
+  - **A_MATRIX:** Klasik Satır × Sütun matris tablosu (Z-okuma sırası).
+  - **B_KEY_VALUE:** Etiket : Değer form tabloları.
+  - **C_PARALLEL_TEXT:** Sütun bazlı çoklu paragraf tablosu (Önce sol sütun baştan sona, sonra sağ sütun; satır içi NLP cümle birleştirme desteğiyle).
+  - **D_MERGED_CELLS:** Birleşik hücreli / hiyerarşik tablolar.
+  - **E_FORMULA:** Matematiksel ve formül tabloları.
+  - **F_HYBRID_NOTE:** Dipnotlu ve açıklamalı tablolar.
 
-### 3. 📑 Layout (Düzen) ve Kategori Duyarlılığı
-- **`title` (Başlık):** Bağımsız bir varlık olarak ele alınır. Başlıktan önce veya sonra gelen düz metinler kesinlikle başlıkla birleştirilmez.
-- **`table` (Tablo):** `TableClassifier` ile otomatik analiz edilir; hücre bazlı (`cell-by-cell`) işlenir ve türe özel anlamsal okuma metni üretilir.
-- **`abandon` (Arka Plan / Filigran / Dipnot):** BBox katmanında kendi kategorisiyle (`Abandon`) bağımsız olarak görselleştirilir.
-- **`plain text` (Düz Metin):** Aynı sütun akışı içerisindeki ardışık düz metin layout blokları önce birleştirilir, ardından NLP kurallarıyla cümlelere bölünür.
-- **İki Sütun (2-Column) Ayrımı:** İki sütunlu sayfalarda sol ve sağ sütunlar kesin olarak ayrı gruplanır; sütunlar arası yatay birleşme engellenir.
-- **Makro Kutu & Mükerrer Filtreleme:** Cümle ve satır kutularının arkasında kalan dev konteyner kutuları (`macro container`) ve yüksek çakışmalı mükerrer tespitler otomatik olarak temizlenir.
+- **🎯 Etkileşimli Bounding Box Editörü:**
+  - 8 tutamaç ile BBox boyutlandırma ve sürükleyerek taşıma.
+  - Serbest çizim modu (**Draw Mode**) ile yeni BBox oluşturma.
+  - ID ve metin düzenleme, cümle birleştirme (**Add to Existed**), silme ve güncel JSON indirme.
 
-### 4. 🎯 Etkileşimli Bounding Box Editörü (`overlay.js`)
-- **8 Noktalı Boyutlandırma & Taşıma:** Her kutu 8 tutamaç (`nw, n, ne, e, se, s, sw, w`) ile yeniden boyutlandırılabilir ve fareyle sürüklenebilir.
-- **Yeni BBox Çizim Modu:** "Draw Mode" aktif edilerek PDF üzerinde fare ile serbestçe yeni sınırlayıcı kutular çizilebilir.
-- **Görünürlük Filtreleri:**
-  - `All Sentence`: Tüm sayfalardaki kutuları gösterir.
-  - `Just Selected`: Yalnızca seçili olan cümlenin kutularını gösterir.
-- **ID & Metin Düzenleme:** Seçili kutunun ID'si ve metin içeriği sağ panelden anında düzenlenebilir ve kaydedilebilir.
-- **Dışa Aktarma:** Güncellenmiş BBox koordinatları ve metinleri JSON olarak indirilebilir.
-
-### 5. 🖥️ Modern Arayüz & PDF Görüntüleyici (`pdf-viewer.js`, `style.css`)
-- **PDF.js Entegrasyonu:** Yüksek çözünürlüklü sürekli sayfa akışı (Continuous Scroll).
-- **Görünüm Kontrolleri:** Yakınlaştırma (Zoom In / Zoom Out / Fit Width / Fit Page).
-- **Tema Desteği:** Açık ve Koyu Tema (Light / Dark Mode).
-- **Çift Yönlü Etkileşim:** PDF'teki kutuya tıklandığında sağ paneldeki form güncellenir; formdaki değişiklikler anında PDF üzerine yansır.
+- **🔊 TTS Sesli Okuma:**
+  - Belgeyi veya seçili cümleyi belirlenen okuma sırasına göre seslendirme ve hız kontrolü (0.75x - 2.0x).
 
 ---
 
@@ -49,56 +32,39 @@ Sistem, PDF belgelerindeki tabloları yalnızca standart $N \times M$ grid olara
 
 ```text
 directly_detect_bbox/
-├── index.html                  # Ana web arayüzü
-├── README.md                   # Proje dokümantasyonu
-├── new_sentence_splitter.py    # Python NLP & BBox referans motoru
-├── css/
-│   └── style.css               # Modern karanlık/aydınlık tema stilleri
+├── index.html               # Ana web arayüzü
+├── table-tester.html        # Tablo laboratuvarı ve test arayüzü
+├── css/style.css            # Modern karanlık/aydınlık tema stilleri
 ├── js/
-│   ├── app.js                  # Uygulama mantığı ve durum yönetimi
-│   ├── bbox-parser.js          # Evrensel JSON & koordinat ayrıştırma motoru
-│   ├── table-classifier.js     # 6 tipli tablo sınıflandırıcı & okuma sırası motoru
-│   ├── sentence-splitter.js    # JavaScript NLP cümle ve BBox hesaplayıcı
-│   ├── overlay.js              # BBox çizim, seçim, sürükleme ve boyutlandırma
-│   ├── pdf-viewer.js           # PDF render ve sayfa ölçekleme yönetimi
-│   └── pdf.min.js              # PDF.js kütüphanesi
-└── sample_data/
-    ├── sample.pdf              # Örnek PDF belgesi
-    ├── sample.json             # Örnek JSON koordinat verisi
-    └── sample-data.js          # Dahili test verisi
+│   ├── app.js               # Uygulama mantığı ve durum yönetimi
+│   ├── bbox-parser.js       # JSON ve koordinat ayrıştırma motoru
+│   ├── table-classifier.js  # 6 tipli tablo okuma sırası motoru
+│   ├── sentence-splitter.js # NLP cümle ve BBox hesaplayıcı
+│   ├── overlay.js           # BBox çizim, seçim, sürükleme ve boyutlandırma
+│   ├── pdf-viewer.js        # PDF render ve sayfa ölçekleme
+│   └── tts-reader.js        # Sesli okuma yöneticisi
+└── sample_data/             # Örnek PDF ve JSON test verileri
 ```
 
 ---
 
-## 🛠️ Kurulum ve Çalıştırma
+## 🛠️ Hızlı Başlangıç
 
-Proje herhangi bir derleme adımı (build step) gerektirmez. Doğrudan statik web sunucusu ile çalıştırılabilir:
+Derleme (build) gerektirmez. Doğrudan statik sunucuyla çalıştırılabilir:
 
-### 1. Sunucuyu Başlatın
 ```bash
 python -m http.server 8080
 ```
 
-### 2. Tarayıcınızda Açın
-```text
-http://localhost:8080
-```
-*(veya doğrudan `index.html` dosyasını modern bir tarayıcıda açabilirsiniz.)*
+Tarayıcınızda açın:
+👉 **`http://localhost:8080`**
 
 ---
 
-## 📖 Kullanım Kılavuzu
+## 📖 Hızlı Kullanım
 
-1. **Dosya Yükleme:**
-   - PDF dosyanızı sol yükleme alanına sürükleyin veya dosya seçici ile yükleyin.
-   - Model çıktısı olan JSON dosyanızı sağ yükleme alanına bırakın.
-2. **Kutuları İnceleme:**
-   - PDF üzerinde kırmızı rozetli sınırlayıcı kutular görüntülenecektir.
-   - Bir kutuya tıkladığınızda sağ panelde cümlenin metni ve ID'si görüntülenir.
-3. **Kutuları Düzenleme:**
-   - Seçili kutunun köşelerindeki tutamaçları kullanarak boyutunu ayarlayın veya kutuyu yeni bir konuma sürükleyin.
-   - Sağ panelden metni veya ID'yi güncelleyip **Save Text** / **Save Id** butonlarına basın.
-4. **Yeni Kutu Ekleme:**
-   - Üst bardaki **Draw Mode** butonuna tıklayarak çizim modunu açın ve PDF üzerinde sürükleyerek yeni kutu oluşturun.
-5. **JSON İndirme:**
-   - Yapılan tüm düzenlemeleri içeren güncel JSON verisini üst bardaki **Export JSON** butonuyla kaydedin.
+1. **Yükle:** PDF ve JSON dosyalarınızı üst bardan yükleyin.
+2. **İncele & Seç:** PDF üzerindeki numaralandırılmış kutulara tıklayarak sağ panelden cümle ve tablo bilgilerini görün.
+3. **Tablo Tipi Değiştir:** Tablo hücreleri için sağ panelden tablo tipini (örn. `C — Paralel Paragraf`) seçip anında okuma sırasını güncelleyin.
+4. **Düzenle:** Tutamaçlarla kutuları yeniden boyutlandırın veya yeni kutular çizin.
+5. **Dışa Aktar:** **JSON İndir** butonu ile düzenlenen verileri kaydedin.

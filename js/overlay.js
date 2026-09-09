@@ -31,13 +31,24 @@ class BBoxOverlayManager {
 
   setData(bboxes) {
     this.bboxesByPage.clear();
-    bboxes.forEach((item, idx) => {
+    const seenIds = new Set();
+    let autoCounter = 1;
+    (bboxes || []).forEach((item, idx) => {
+      if (!item.id || seenIds.has(String(item.id))) {
+        item.id = `bbox-p${item.page || 1}-${idx + 1}-${Date.now()}-${autoCounter++}-${Math.random().toString(36).substr(2, 6)}`;
+      }
+      seenIds.add(String(item.id));
       const pageNum = parseInt(item.page, 10) || 1;
       if (!this.bboxesByPage.has(pageNum)) {
         this.bboxesByPage.set(pageNum, []);
       }
       this.bboxesByPage.get(pageNum).push(item);
     });
+  }
+
+  setBBoxes(bboxes) {
+    this.setData(bboxes);
+    this.reRenderAllPages();
   }
 
   getAllItems() {
@@ -142,12 +153,17 @@ class BBoxOverlayManager {
 
     this.pageRenderCache.set(pageNum, { pageWrapper, pageWidth, pageHeight, pdfPageOriginalSize, refW, refH, scaleX, scaleY });
 
-    items.forEach(item => {
+    items.forEach((item, idx) => {
+      if (!item.id) {
+        item.id = `bbox-p${pageNum}-${idx + 1}-${Math.random().toString(36).substr(2, 6)}`;
+      }
       const boxElem = document.createElement('div');
-      const isActive = String(this.activeBBoxId) === String(item.id);
+      const isActive = Boolean(this.activeBBoxId) && String(this.activeBBoxId) === String(item.id);
       boxElem.className = `bbox-rect ${isActive ? 'active' : ''}`;
       boxElem.dataset.id = item.id;
-      const sentenceIdVal = item.sentence_id !== undefined ? item.sentence_id : (item.id_display !== undefined ? item.id_display : item.index);
+      const sentenceIdVal = (item.id_display !== undefined && item.id_display !== null)
+        ? item.id_display
+        : ((item.sentence_id !== undefined && item.sentence_id !== null) ? item.sentence_id : item.index);
       boxElem.dataset.sentenceId = String(sentenceIdVal);
 
       // Visibility filter
@@ -196,9 +212,16 @@ class BBoxOverlayManager {
       // Red ID badge at the top-right / right side
       const badge = document.createElement('span');
       badge.className = 'bbox-tag-badge';
-      // Use custom sentence id or display id
-      badge.textContent = item.id_display !== undefined ? item.id_display : (item.sentence_id !== undefined ? item.sentence_id : item.index);
+      badge.textContent = sentenceIdVal;
       boxElem.appendChild(badge);
+
+      if (item.table_type) {
+        const tableBadge = document.createElement('span');
+        tableBadge.className = 'bbox-table-type-badge';
+        tableBadge.textContent = item.table_type;
+        tableBadge.title = `Tablo Tipi: ${item.table_type} | Okuma Sırası: #${item.table_order_id || 1}`;
+        boxElem.appendChild(tableBadge);
+      }
 
       // 8 Resize Handles (nw, n, ne, e, se, s, sw, w)
       ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w'].forEach(dir => {
@@ -252,6 +275,13 @@ class BBoxOverlayManager {
   selectBBox(bboxId, triggerCallback = false) {
     this.activeBBoxId = bboxId;
 
+    if (!bboxId) {
+      document.querySelectorAll('.bbox-rect').forEach(el => {
+        el.classList.remove('active', 'same-sentence');
+      });
+      return null;
+    }
+
     let foundItem = null;
     for (const items of this.bboxesByPage.values()) {
       const match = items.find(it => String(it.id) === String(bboxId));
@@ -261,14 +291,39 @@ class BBoxOverlayManager {
       }
     }
 
-    const sId = foundItem ? String(foundItem.sentence_id !== undefined ? foundItem.sentence_id : foundItem.id_display) : null;
+    const sId = foundItem
+      ? String((foundItem.id_display !== undefined && foundItem.id_display !== null)
+          ? foundItem.id_display
+          : ((foundItem.sentence_id !== undefined && foundItem.sentence_id !== null) ? foundItem.sentence_id : foundItem.index))
+      : null;
 
     document.querySelectorAll('.bbox-rect').forEach(el => {
-      const isExactMatch = el.dataset.id === String(bboxId);
-      const isSentenceMatch = sId !== null && el.dataset.sentenceId === sId;
+      const isExactMatch = Boolean(bboxId) && el.dataset.id === String(bboxId);
+      const isSentenceMatch = Boolean(sId) && el.dataset.sentenceId === sId;
 
       el.classList.toggle('active', isExactMatch);
       el.classList.toggle('same-sentence', isSentenceMatch && !isExactMatch);
+
+      if (isExactMatch && foundItem) {
+        let badge = el.querySelector('.bbox-table-type-badge');
+        if (foundItem.table_type) {
+          if (!badge) {
+            badge = document.createElement('span');
+            badge.className = 'bbox-table-type-badge';
+            el.appendChild(badge);
+          }
+          badge.textContent = foundItem.table_type;
+          badge.title = `Tablo Tipi: ${foundItem.table_type} | Okuma Sırası: #${foundItem.table_order_id || 1}`;
+          badge.style.display = '';
+        } else if (badge) {
+          badge.remove();
+        }
+      } else {
+        const badge = el.querySelector('.bbox-table-type-badge');
+        if (badge) {
+          badge.style.display = '';
+        }
+      }
 
       if (!this.showAllSentences) {
         el.style.display = (isExactMatch || isSentenceMatch) ? 'block' : 'none';
@@ -314,6 +369,9 @@ class BBoxOverlayManager {
   /**
    * Re-assign sequential sentence IDs to all items across all pages without resetting per page
    */
+  /**
+   * Re-assign sequential sentence IDs to all items across all pages without resetting per page
+   */
   reindexAllItems() {
     let globalIndex = 0;
     let globalSentenceCounter = 0;
@@ -326,8 +384,8 @@ class BBoxOverlayManager {
         it.index = globalIndex;
         globalIndex++;
 
-        // Sibling line matching key: belongs to same page and sentence ID or full text
-        const sKey = `${pNum}_${(it.sentence_id !== undefined && it.sentence_id !== null) ? it.sentence_id : (it.fullSentenceText || it.text || `item_${idx}`)}`;
+        // Sibling line matching key: belongs to same page and sentence ID / group key
+        const sKey = `${pNum}_${(it.sentence_group !== undefined && it.sentence_group !== null) ? it.sentence_group : ((it.sentence_id !== undefined && it.sentence_id !== null) ? it.sentence_id : (it.fullSentenceText || it.text || `item_${idx}`))}`;
 
         if (lastSentenceKey !== null && sKey !== lastSentenceKey) {
           globalSentenceCounter++;
@@ -336,6 +394,7 @@ class BBoxOverlayManager {
 
         it.sentence_id = globalSentenceCounter;
         it.id_display = globalSentenceCounter;
+        it.sentence_group = null;
       });
     }
   }
@@ -352,8 +411,10 @@ class BBoxOverlayManager {
   }
 
   /**
-   * Move / Insert BBox at target ID and shift all subsequent items up by 1
-   * (e.g. if moved to 116, it takes ID 116, and existing 116 becomes 117, 117 becomes 118, etc.)
+   * Move / Insert BBox at target ID and shift all subsequent items up by 1.
+   * If a middle box in a multi-box sentence has its ID changed:
+   *  - Prior sibling boxes before it keep their old ID.
+   *  - Selected box and any following sibling boxes with the same ID change to the new ID.
    */
   reorderBBoxId(bboxId, targetIdStr) {
     const targetId = parseInt(targetIdStr, 10);
@@ -363,21 +424,41 @@ class BBoxOverlayManager {
     const currentItem = allItems.find(it => String(it.id) === String(bboxId));
     if (!currentItem) return false;
 
+    const sourcePageItems = this.bboxesByPage.get(currentItem.page) || [];
+    const currentIdx = sourcePageItems.findIndex(it => String(it.id) === String(bboxId));
+    if (currentIdx === -1) return false;
+
     const currentSentenceId = (currentItem.sentence_id !== undefined && currentItem.sentence_id !== null)
       ? currentItem.sentence_id
       : currentItem.id_display;
 
-    // Identify all sibling lines belonging to this sentence on this page
-    const movingItems = allItems.filter(it => {
-      if (it.page !== currentItem.page) return false;
-      const sId = (it.sentence_id !== undefined && it.sentence_id !== null) ? it.sentence_id : it.id_display;
-      return String(it.id) === String(bboxId) || (sId !== undefined && sId === currentSentenceId);
-    });
+    // 1. Separate preceding sibling boxes (before currentIdx) and moving sibling boxes (currentIdx and after)
+    const precGroupKey = `prec_grp_${Date.now()}_${Math.random()}`;
+    for (let i = 0; i < currentIdx; i++) {
+      const it = sourcePageItems[i];
+      const itSId = (it.sentence_id !== undefined && it.sentence_id !== null) ? it.sentence_id : it.id_display;
+      if (itSId === currentSentenceId) {
+        it.sentence_group = precGroupKey;
+      }
+    }
 
-    if (movingItems.length === 0) return false;
+    // Identify moving items: currentItem AND all sibling items that appear AFTER currentItem with the same sentence_id
+    const movingGroupKey = `split_grp_${Date.now()}_${Math.random()}`;
+    const movingItems = [currentItem];
+    currentItem.sentence_group = movingGroupKey;
+
+    for (let i = currentIdx + 1; i < sourcePageItems.length; i++) {
+      const it = sourcePageItems[i];
+      const itSId = (it.sentence_id !== undefined && it.sentence_id !== null) ? it.sentence_id : it.id_display;
+      if (itSId === currentSentenceId) {
+        it.sentence_group = movingGroupKey;
+        movingItems.push(it);
+      } else {
+        break;
+      }
+    }
 
     // Remove moving items from their current page list
-    const sourcePageItems = this.bboxesByPage.get(currentItem.page) || [];
     movingItems.forEach(mIt => {
       const idx = sourcePageItems.findIndex(it => String(it.id) === String(mIt.id));
       if (idx !== -1) sourcePageItems.splice(idx, 1);
@@ -394,24 +475,12 @@ class BBoxOverlayManager {
       const targetPageNum = targetItem.page;
       const targetPageItems = this.bboxesByPage.get(targetPageNum) || [];
 
-      // Update page property of moving items if page changed
       movingItems.forEach(mIt => mIt.page = targetPageNum);
 
-      const isMovingForward = (currentSentenceId !== undefined && currentSentenceId < targetId);
-
-      if (isMovingForward) {
-        // When moving forward: insert right AFTER the last sibling line of target sentence
-        const lastTargetSibling = targetSiblings[targetSiblings.length - 1];
-        const lastIdx = targetPageItems.findIndex(it => String(it.id) === String(lastTargetSibling.id));
-        const insertPos = (lastIdx !== -1) ? lastIdx + 1 : targetPageItems.length;
-        targetPageItems.splice(insertPos, 0, ...movingItems);
-      } else {
-        // When moving backward: insert right BEFORE the first sibling line of target sentence
-        const firstTargetSibling = targetSiblings[0];
-        const firstIdx = targetPageItems.findIndex(it => String(it.id) === String(firstTargetSibling.id));
-        const insertPos = (firstIdx !== -1) ? firstIdx : 0;
-        targetPageItems.splice(insertPos, 0, ...movingItems);
-      }
+      // Insert right BEFORE the target sentence so movingItems take the exact targetId
+      const firstIdx = targetPageItems.findIndex(it => String(it.id) === String(targetItem.id));
+      const insertPos = (firstIdx !== -1) ? firstIdx : 0;
+      targetPageItems.splice(insertPos, 0, ...movingItems);
     } else {
       // Target ID does not currently exist: find closest position or boundary
       const pageNumbers = Array.from(this.bboxesByPage.keys()).sort((a, b) => Number(a) - Number(b));
@@ -538,6 +607,13 @@ class BBoxOverlayManager {
    * Interactive Drawing Mode setup
    */
   _attachDrawListeners(pageWrapper, pageNum) {
+    if (pageWrapper._drawListenersAttached) {
+      pageWrapper._drawPageNum = pageNum;
+      return;
+    }
+    pageWrapper._drawListenersAttached = true;
+    pageWrapper._drawPageNum = pageNum;
+
     let isDrawing = false;
     let drawStartX = 0;
     let drawStartY = 0;
@@ -545,12 +621,15 @@ class BBoxOverlayManager {
 
     pageWrapper.addEventListener('mousedown', (e) => {
       if (!this.drawMode) return;
+      if (e.button !== 0) return; // Only left click
       if (e.target.closest('.bbox-rect')) return;
 
       isDrawing = true;
       const rect = pageWrapper.getBoundingClientRect();
       drawStartX = e.clientX - rect.left;
       drawStartY = e.clientY - rect.top;
+
+      pageWrapper.querySelectorAll('.draw-preview-box').forEach(b => b.remove());
 
       previewBox = document.createElement('div');
       previewBox.className = 'draw-preview-box';
@@ -583,15 +662,17 @@ class BBoxOverlayManager {
         window.removeEventListener('mouseup', onMouseUp);
 
         if (previewBox) {
-          const width = parseFloat(previewBox.style.width);
-          const height = parseFloat(previewBox.style.height);
-          const left = parseFloat(previewBox.style.left);
-          const top = parseFloat(previewBox.style.top);
+          const width = parseFloat(previewBox.style.width) || 0;
+          const height = parseFloat(previewBox.style.height) || 0;
+          const left = parseFloat(previewBox.style.left) || 0;
+          const top = parseFloat(previewBox.style.top) || 0;
           previewBox.remove();
+          previewBox = null;
 
           // If box has meaningful size (> 10px)
           if (width > 10 && height > 10) {
-            this._createNewBoxFromDrawnPixels(pageNum, left, top, width, height);
+            const curPage = pageWrapper._drawPageNum || pageNum;
+            this._createNewBoxFromDrawnPixels(curPage, left, top, width, height);
           }
         }
       };
@@ -623,12 +704,23 @@ class BBoxOverlayManager {
     const x1 = Math.round((left + width) * scaleX);
     const y1 = Math.round((top + height) * scaleY);
 
+    let maxSentenceId = -1;
+    allItems.forEach(it => {
+      const sId = it.sentence_id !== undefined && it.sentence_id !== null ? it.sentence_id : it.id_display;
+      if (typeof sId === 'number' && !isNaN(sId) && sId > maxSentenceId) {
+        maxSentenceId = sId;
+      }
+    });
+    const nextSentenceId = maxSentenceId >= 0 ? maxSentenceId + 1 : (allItems.length + 1);
+
     const newItem = {
       id: newId,
       index: newIdx,
-      id_display: allItems.length,
+      id_display: nextSentenceId,
+      sentence_id: nextSentenceId,
       page: pageNum,
       text: "Yeni Cümle / Paragraf",
+      fullSentenceText: "Yeni Cümle / Paragraf",
       rawCoords: [x0, y0, x1, y1],
       coordType: 'image_pixels',
       yOrigin: 'top',
@@ -654,6 +746,7 @@ class BBoxOverlayManager {
    * Handle dragging and resizing of existing bounding boxes
    */
   _setupGlobalMouseEvents() {
+    if (typeof window === 'undefined') return;
     window.addEventListener('mousemove', (e) => {
       if (!this.isDragging && !this.isResizing) return;
       if (!this.currentDragItem || !this.currentDragPageNum) return;
@@ -774,7 +867,9 @@ class BBoxOverlayManager {
   }
 }
 
-window.BBoxOverlayManager = BBoxOverlayManager;
+if (typeof window !== 'undefined') {
+  window.BBoxOverlayManager = BBoxOverlayManager;
+}
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = BBoxOverlayManager;
 }
