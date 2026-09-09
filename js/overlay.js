@@ -552,15 +552,29 @@ class BBoxOverlayManager {
     currentItem.sentence_id = targetSentenceId;
     currentItem.id_display = targetItem.id_display;
 
-    // Merge fullSentenceText
-    const targetFullText = targetItem.fullSentenceText || targetItem.text || '';
-    const currentText = currentItem.text || '';
+    // Merge fullSentenceText: combine texts of target and current item
+    const targetFullText = (targetItem.fullSentenceText || targetItem.text || '').trim();
+    const currentText = (currentItem.text || '').trim();
     let joinedText = targetFullText;
-    if (currentText && !targetFullText.includes(currentText)) {
-      joinedText = `${targetFullText} ${currentText}`.trim();
+    if (currentText && currentText !== 'Yeni Cümle / Paragraf') {
+      if (!targetFullText) {
+        joinedText = currentText;
+      } else if (!targetFullText.includes(currentText)) {
+        joinedText = `${targetFullText} ${currentText}`.trim();
+      }
     }
     targetItem.fullSentenceText = joinedText;
     currentItem.fullSentenceText = joinedText;
+
+    // Inherit table metadata if targetItem belongs to a table
+    if (targetItem.table_id || targetItem.category === 'Table Cell') {
+      currentItem.table_id = targetItem.table_id || null;
+      currentItem.table_type = targetItem.table_type || null;
+      currentItem.table_order_id = targetItem.table_order_id !== undefined ? targetItem.table_order_id : null;
+      currentItem.table_order_label = targetItem.table_order_label || null;
+      currentItem.category = 'Table Cell';
+      currentItem.isTableCell = true;
+    }
 
     // Place currentItem adjacent to targetItem on that page
     const sourcePageItems = this.bboxesByPage.get(currentItem.page) || [];
@@ -572,6 +586,14 @@ class BBoxOverlayManager {
     const tIdx = targetPageItems.findIndex(it => String(it.id) === String(targetItem.id));
     const insertPos = (tIdx !== -1) ? tIdx + 1 : targetPageItems.length;
     targetPageItems.splice(insertPos, 0, currentItem);
+
+    // Unify fullSentenceText on ALL sibling items with targetSentenceId on that page
+    targetPageItems.forEach(it => {
+      const itSId = it.sentence_id !== undefined ? it.sentence_id : it.id_display;
+      if (itSId === targetSentenceId) {
+        it.fullSentenceText = joinedText;
+      }
+    });
 
     this.reindexAllItems();
     this.reRenderAllPages();
@@ -632,17 +654,17 @@ class BBoxOverlayManager {
       pageWrapper.querySelectorAll('.draw-preview-box').forEach(b => b.remove());
 
       previewBox = document.createElement('div');
-      previewBox.className = 'draw-preview-box';
+      previewBox.className = 'bbox-draw-preview';
       previewBox.style.left = `${drawStartX}px`;
       previewBox.style.top = `${drawStartY}px`;
       previewBox.style.width = '0px';
       previewBox.style.height = '0px';
       pageWrapper.appendChild(previewBox);
 
-      const onMouseMove = (moveEvent) => {
+      const onMouseMove = (moveEv) => {
         if (!isDrawing || !previewBox) return;
-        const curX = moveEvent.clientX - rect.left;
-        const curY = moveEvent.clientY - rect.top;
+        const curX = moveEv.clientX - rect.left;
+        const curY = moveEv.clientY - rect.top;
 
         const left = Math.min(drawStartX, curX);
         const top = Math.min(drawStartY, curY);
@@ -655,24 +677,23 @@ class BBoxOverlayManager {
         previewBox.style.height = `${height}px`;
       };
 
-      const onMouseUp = (upEvent) => {
+      const onMouseUp = (upEv) => {
         if (!isDrawing) return;
         isDrawing = false;
         window.removeEventListener('mousemove', onMouseMove);
         window.removeEventListener('mouseup', onMouseUp);
 
-        if (previewBox) {
-          const width = parseFloat(previewBox.style.width) || 0;
-          const height = parseFloat(previewBox.style.height) || 0;
-          const left = parseFloat(previewBox.style.left) || 0;
-          const top = parseFloat(previewBox.style.top) || 0;
-          previewBox.remove();
+        if (previewBox && previewBox.parentNode) {
+          const finalW = parseFloat(previewBox.style.width) || 0;
+          const finalH = parseFloat(previewBox.style.height) || 0;
+          const finalL = parseFloat(previewBox.style.left) || 0;
+          const finalT = parseFloat(previewBox.style.top) || 0;
+          previewBox.parentNode.removeChild(previewBox);
           previewBox = null;
 
-          // If box has meaningful size (> 10px)
-          if (width > 10 && height > 10) {
+          if (finalW >= 10 && finalH >= 8) {
             const curPage = pageWrapper._drawPageNum || pageNum;
-            this._createNewBoxFromDrawnPixels(curPage, left, top, width, height);
+            this._createNewBoxFromDrawnPixels(curPage, finalL, finalT, finalW, finalH);
           }
         }
       };
@@ -713,6 +734,47 @@ class BBoxOverlayManager {
     });
     const nextSentenceId = maxSentenceId >= 0 ? maxSentenceId + 1 : (allItems.length + 1);
 
+    // Check if newly drawn box is inside any existing table on this page
+    const pageItems = (this.bboxesByPage.get(pageNum) || []);
+    const tableItems = pageItems.filter(it => it.table_id || it.table_type || it.category === 'Table Cell' || (it.table_order_id !== null && it.table_order_id !== undefined));
+
+    let matchedTable = null;
+    if (tableItems.length > 0) {
+      const tableMap = new Map();
+      tableItems.forEach(it => {
+        const tId = it.table_id || 'default_table';
+        if (!tableMap.has(tId)) tableMap.set(tId, []);
+        tableMap.get(tId).push(it);
+      });
+
+      for (const [tId, tblCells] of tableMap.entries()) {
+        const allXs = tblCells.map(c => (c.rawCoords || c.bbox || [0,0,0,0])[0]).concat(tblCells.map(c => (c.rawCoords || c.bbox || [0,0,0,0])[2]));
+        const allYs = tblCells.map(c => (c.rawCoords || c.bbox || [0,0,0,0])[1]).concat(tblCells.map(c => (c.rawCoords || c.bbox || [0,0,0,0])[3]));
+        const tblMinX = Math.min(...allXs) - 15;
+        const tblMaxX = Math.max(...allXs) + 15;
+        const tblMinY = Math.min(...allYs) - 15;
+        const tblMaxY = Math.max(...allYs) + 15;
+
+        const boxMidX = (x0 + x1) / 2;
+        const boxMidY = (y0 + y1) / 2;
+
+        const isInside = (boxMidX >= tblMinX && boxMidX <= tblMaxX && boxMidY >= tblMinY && boxMidY <= tblMaxY) ||
+                         (Math.max(x0, tblMinX) < Math.min(x1, tblMaxX) && Math.max(y0, tblMinY) < Math.min(y1, tblMaxY));
+
+        if (isInside) {
+          const sample = tblCells[0];
+          const maxTOrder = Math.max(...tblCells.map(c => Number(c.table_order_id) || 0), 0);
+          matchedTable = {
+            table_id: tId !== 'default_table' ? tId : sample.table_id || `table-p${pageNum}-1`,
+            table_type: sample.table_type || 'A_MATRIX',
+            table_order_id: maxTOrder + 1,
+            table_order_label: `T1.${maxTOrder + 1}`
+          };
+          break;
+        }
+      }
+    }
+
     const newItem = {
       id: newId,
       index: newIdx,
@@ -725,7 +787,14 @@ class BBoxOverlayManager {
       coordType: 'image_pixels',
       yOrigin: 'top',
       confidence: 1.0,
-      category: 'plain text'
+      category: matchedTable ? 'Table Cell' : 'plain text',
+      ...(matchedTable ? {
+        table_id: matchedTable.table_id,
+        table_type: matchedTable.table_type,
+        table_order_id: matchedTable.table_order_id,
+        table_order_label: matchedTable.table_order_label,
+        isTableCell: true
+      } : {})
     };
 
     if (!this.bboxesByPage.has(pageNum)) {
