@@ -829,8 +829,33 @@ class TableClassifier {
           const boxA = hA.rawCoords || hA.bbox || [0, 0, 0, 0];
           const boxB = hB.rawCoords || hB.bbox || [0, 0, 0, 0];
           hB.rawCoords = [Math.min(boxA[0], boxB[0]), Math.min(boxA[1], boxB[1]), Math.max(boxA[2], boxB[2]), Math.max(boxA[3], boxB[3])];
-          // Keep the cleaner/longer title
-          hB.text = tB.length >= tA.length ? tB : tA;
+          
+          const combinedWords = [...(hA.words || []), ...(hB.words || [])];
+          const uniqueWords = [];
+          const seen = new Set();
+          combinedWords.forEach(w => {
+            const key = `${w.word || w.text}_${(w.bbox || w.coords)?.[0] || 0}`;
+            if (!seen.has(key)) {
+              seen.add(key);
+              uniqueWords.push(w);
+            }
+          });
+          uniqueWords.sort((a, b) => ((a.bbox || a.coords)?.[0] || 0) - ((b.bbox || b.coords)?.[0] || 0));
+          hB.words = uniqueWords;
+          if (uniqueWords.length > 0) {
+            hB.text = uniqueWords.map(w => w.word || w.text || '').join(' ').trim();
+            const wBoxes = uniqueWords.map(w => w.bbox || w.coords).filter(b => Array.isArray(b) && b.length >= 4);
+            if (wBoxes.length > 0) {
+              hB.rawCoords = [
+                Math.min(...wBoxes.map(b => b[0])),
+                Math.min(...wBoxes.map(b => b[1])),
+                Math.max(...wBoxes.map(b => b[2])),
+                Math.max(...wBoxes.map(b => b[3]))
+              ];
+            }
+          } else {
+            hB.text = tB.length >= tA.length ? tB : tA;
+          }
           hA._mergedInto = hB;
         }
       }
@@ -921,9 +946,11 @@ class TableClassifier {
       rowHeaders.set(c.row, (c.text || '').trim());
     });
 
+    const activeCells = sortedCells.filter(c => !c._mergedInto);
+
     return {
-      cells: sortedCells,
-      headerCells,
+      cells: activeCells,
+      headerCells: activeHeaderCells,
       colHeaders,
       rowHeaders,
       firstDataRow,
@@ -1673,6 +1700,19 @@ class TableClassifier {
       }
     }
 
+    let tightBox = cellBox;
+    if (Array.isArray(cell.words) && cell.words.length > 0) {
+      const validWordBoxes = cell.words.map(w => w.bbox || w.coords).filter(b => Array.isArray(b) && b.length >= 4);
+      if (validWordBoxes.length > 0) {
+        tightBox = [
+          Math.min(...validWordBoxes.map(b => b[0])),
+          Math.min(...validWordBoxes.map(b => b[1])),
+          Math.max(...validWordBoxes.map(b => b[2])),
+          Math.max(...validWordBoxes.map(b => b[3]))
+        ];
+      }
+    }
+
     return [{
       id: cell.id || `bbox-p${pageNum}-t${tableIndex}-c${tOrderId}-${startSentenceId}-${Math.random().toString(36).substr(2, 6)}`,
       page: pageNum,
@@ -1684,9 +1724,9 @@ class TableClassifier {
       table_order_label: `T${tableIndex}.${tOrderId}`,
       text: cellText,
       fullSentenceText: fullText,
-      rawCoords: cellBox,
-      bbox: cellBox,
-      rawBox: cellBox,
+      rawCoords: tightBox,
+      bbox: tightBox,
+      rawBox: tightBox,
       coordType: 'abs_points',
       category: 'Table Cell',
       confidence: cell.confidence || 0.98,
