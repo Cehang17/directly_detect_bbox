@@ -597,14 +597,30 @@
         <span>Tablo Okuma Sırası Laboratuvarı</span>
       </a>
       <span style="font-size:0.75rem; background:rgba(56,189,248,0.15); color:#38bdf8; padding:3px 10px; border-radius:20px; font-weight:600;">
-        Özerk Test Ortamı
+        Özerk Test &amp; Denetleme Ortamı
       </span>
     </div>
 
     <div class="topbar-nav">
-      <button id="custom-json-btn" class="topbar-btn">
-        <i class="fa-solid fa-code"></i> Kendi Tablo JSON'unu Yükle
+      <!-- Direct Upload & Sync Buttons -->
+      <button type="button" id="lab-pdf-btn" class="topbar-btn" title="PDF Belgesi Yükle">
+        <i class="fa-solid fa-file-pdf"></i> <span id="lab-pdf-label">PDF Yükle</span>
       </button>
+      <input type="file" id="lab-pdf-input" accept=".pdf,application/pdf" style="display:none">
+
+      <button type="button" id="lab-json-btn" class="topbar-btn" title="JSON Tablo / BBox Verisi Yükle">
+        <i class="fa-solid fa-file-code"></i> <span id="lab-json-label">JSON Yükle</span>
+      </button>
+      <input type="file" id="lab-json-input" accept=".json,application/json,text/plain" style="display:none">
+
+      <button type="button" id="lab-sync-main-btn" class="topbar-btn" title="Ana editörde açık olan PDF ve JSON tablolarını otomatik getir" style="background:rgba(56,189,248,0.18); border-color:#38bdf8; color:#38bdf8;">
+        <i class="fa-solid fa-arrows-rotate"></i> <span>Ana Editörden Çek</span>
+      </button>
+
+      <button id="custom-json-btn" class="topbar-btn">
+        <i class="fa-solid fa-code"></i> JSON Yapıştır
+      </button>
+
       <a href="index.html" class="topbar-btn primary">
         <i class="fa-solid fa-arrow-left"></i> Ana Editöre Dön
       </a>
@@ -614,11 +630,22 @@
   <!-- Workspace Container -->
   <div class="lab-container">
     
-    <!-- Left Sidebar: Sample Tables -->
+    <!-- Left Sidebar: Tables List -->
     <aside class="lab-sidebar-left">
+      <!-- Dynamic Uploaded Tables Section -->
+      <div id="uploaded-tables-block" class="sidebar-block" style="display:none; background:rgba(2,132,199,0.06); border-bottom:1px solid rgba(56,189,248,0.25);">
+        <div class="block-title" style="color:#38bdf8;">
+          <i class="fa-solid fa-folder-open"></i> Yüklenen Belgeden Tablolar (<span id="user-tables-count">0</span>)
+        </div>
+        <div id="user-tables-container" class="sample-table-list">
+          <!-- Populated dynamically with uploaded PDF/JSON tables -->
+        </div>
+      </div>
+
+      <!-- Built-in 6 Categories Samples -->
       <div class="sidebar-block">
         <div class="block-title">
-          <i class="fa-solid fa-layer-group"></i> 6 Tablo Tipi Örnekleri
+          <i class="fa-solid fa-layer-group"></i> 6 Tablo Tipi Şablonları
         </div>
         <div id="sample-tables-container" class="sample-table-list">
           <!-- Populated by JS -->
@@ -748,6 +775,9 @@
   </div>
 
   <!-- Scripts -->
+  <script src="js/pdf.min.js"></script>
+  <script src="js/sentence-splitter.js?v=200.0"></script>
+  <script src="js/bbox-parser.js?v=200.0"></script>
   <script src="js/table-classifier.js?v=200.0"></script>
   <script src="js/table-tester.js?v=200.0"></script>
 </body>

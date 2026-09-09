@@ -1,5 +1,6 @@
 /**
  * Table Tester Controller - Interactive Table Reading Order Playground
+ * Yüklenen PDF ve JSON verileriyle tam entegre çalışan özerk tablo denetleyicisi.
  */
 
 (function () {
@@ -191,6 +192,7 @@
   ];
 
   // App State
+  let userUploadedTables = [];
   let activeSample = SAMPLE_TABLES[0];
   let processedResult = null;
   let currentStepIndex = 0;
@@ -201,7 +203,11 @@
   let showTrajectory = true;
 
   // DOM Elements
+  const uploadedBlock = document.getElementById('uploaded-tables-block');
+  const userTablesContainer = document.getElementById('user-tables-container');
+  const userTablesCount = document.getElementById('user-tables-count');
   const sampleContainer = document.getElementById('sample-tables-container');
+
   const stageBadge = document.getElementById('stage-badge');
   const stageTitle = document.getElementById('stage-title');
   const stageMeta = document.getElementById('stage-meta');
@@ -218,6 +224,12 @@
   const stopBtn = document.getElementById('tts-stop-btn');
   const speedSelect = document.getElementById('tts-speed-select');
   const trajectoryCheckbox = document.getElementById('show-trajectory-checkbox');
+
+  const labPdfBtn = document.getElementById('lab-pdf-btn');
+  const labPdfInput = document.getElementById('lab-pdf-input');
+  const labJsonBtn = document.getElementById('lab-json-btn');
+  const labJsonInput = document.getElementById('lab-json-input');
+  const labSyncBtn = document.getElementById('lab-sync-main-btn');
 
   const customJsonBtn = document.getElementById('custom-json-btn');
   const customModal = document.getElementById('custom-json-modal');
@@ -238,12 +250,112 @@
   }
   initVoices();
 
+  // Helper file reader
+  function readFileAsText(file) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result);
+      reader.onerror = () => reject(reader.error);
+      reader.readAsText(file, 'utf-8');
+    });
+  }
+
+  // =========================================================================
+  // Sync Data with Main Editor (index.html)
+  // =========================================================================
+  function syncFromMainEditor() {
+    try {
+      const rawStored = localStorage.getItem('directly_detect_bbox_shared_data');
+      if (!rawStored) return;
+
+      const parsedData = JSON.parse(rawStored);
+      if (parsedData && Array.isArray(parsedData.detectedTables) && parsedData.detectedTables.length > 0) {
+        userUploadedTables = parsedData.detectedTables.map((t, idx) => ({
+          id: `user-tbl-${t.id || idx + 1}`,
+          name: `${parsedData.jsonFileName ? parsedData.jsonFileName.replace('.json', '') : 'Belge Tablosu'} #${idx + 1} (Sayfa ${t.page || 1})`,
+          type: t.type || 'A_MATRIX',
+          typeName: TableClassifier.TYPE_NAMES[t.type] || t.type,
+          desc: `${t.cells ? t.cells.length : 0} Hücre • Sayfa ${t.page || 1} • Ana Editörden Aktarıldı`,
+          isUserUploaded: true,
+          data: t
+        }));
+
+        renderUserUploadedTables();
+
+        // If currently viewing a sample, switch to the first uploaded user table
+        if (!activeSample || !activeSample.isUserUploaded) {
+          activeSample = userUploadedTables[0];
+          renderSampleList();
+          renderUserUploadedTables();
+          loadTable(activeSample.data, activeSample.type, activeSample.name);
+        }
+      }
+    } catch (err) {
+      console.warn('Sync error:', err);
+    }
+  }
+
+  // BroadcastChannel listener
+  if ('BroadcastChannel' in window) {
+    const bc = new BroadcastChannel('directly_detect_bbox_sync');
+    bc.onmessage = (ev) => {
+      if (ev.data && Array.isArray(ev.data.detectedTables)) {
+        syncFromMainEditor();
+      }
+    };
+  }
+
+  window.addEventListener('storage', (e) => {
+    if (e.key === 'directly_detect_bbox_shared_data') {
+      syncFromMainEditor();
+    }
+  });
+
+  // Render User Uploaded Tables
+  function renderUserUploadedTables() {
+    if (!uploadedBlock || !userTablesContainer) return;
+
+    if (userUploadedTables.length === 0) {
+      uploadedBlock.style.display = 'none';
+      return;
+    }
+
+    uploadedBlock.style.display = 'block';
+    if (userTablesCount) userTablesCount.textContent = userUploadedTables.length;
+
+    userTablesContainer.innerHTML = '';
+    userUploadedTables.forEach(s => {
+      const card = document.createElement('div');
+      card.className = `sample-table-card ${activeSample && s.id === activeSample.id ? 'active' : ''}`;
+      card.style.borderColor = 'rgba(56, 189, 248, 0.4)';
+      card.style.background = (activeSample && s.id === activeSample.id) ? 'rgba(2, 132, 199, 0.25)' : 'rgba(15, 23, 42, 0.9)';
+
+      const tagClass = `tag-${(s.type || 'A_MATRIX').split('_')[0].toLowerCase()}`;
+      card.innerHTML = `
+        <div class="card-badge-row">
+          <span class="table-type-tag ${tagClass}">${s.type || 'A_MATRIX'}</span>
+          <span style="font-size:0.68rem; color:#38bdf8; font-weight:600;"><i class="fa-solid fa-file-invoice"></i> Aktif Belge</span>
+        </div>
+        <div class="card-name" style="color:#38bdf8;">${s.name}</div>
+        <div class="card-desc">${s.desc}</div>
+      `;
+      card.addEventListener('click', () => {
+        stopSpeech();
+        activeSample = s;
+        renderSampleList();
+        renderUserUploadedTables();
+        loadTable(s.data, s.type, s.name);
+      });
+      userTablesContainer.appendChild(card);
+    });
+  }
+
   // Render Sample Tables in Left Sidebar
   function renderSampleList() {
     sampleContainer.innerHTML = '';
     SAMPLE_TABLES.forEach(s => {
       const card = document.createElement('div');
-      card.className = `sample-table-card ${s.id === activeSample.id ? 'active' : ''}`;
+      card.className = `sample-table-card ${activeSample && s.id === activeSample.id ? 'active' : ''}`;
       
       const tagClass = `tag-${s.type.split('_')[0].toLowerCase()}`;
       card.innerHTML = `
@@ -257,6 +369,7 @@
         stopSpeech();
         activeSample = s;
         renderSampleList();
+        renderUserUploadedTables();
         loadTable(s.data, s.type, s.name);
       });
       sampleContainer.appendChild(card);
@@ -265,6 +378,7 @@
 
   // Load and Process Table
   function loadTable(tableData, forcedType = null, customTitle = null) {
+    if (!tableData) return;
     if (forcedType) {
       tableData.forced_type = forcedType;
     }
@@ -272,15 +386,17 @@
     const type = tableData.forced_type || tableData.type || 'A_MATRIX';
     stageBadge.textContent = type;
     stageBadge.className = `table-type-tag tag-${type.split('_')[0].toLowerCase()}`;
-    stageTitle.textContent = customTitle || activeSample.name;
+    stageTitle.textContent = customTitle || (activeSample ? activeSample.name : 'Tablo');
     stageTypeSelect.value = type;
 
     // Process via TableClassifier
-    processedResult = TableClassifier.processTable(tableData, 1, 1, 1);
+    processedResult = TableClassifier.processTable(tableData, tableData.page || 1, 1, 1);
     const items = processedResult.items || [];
     currentStepIndex = 0;
 
-    stageMeta.textContent = `${processedResult.tableMeta.row_count || 1} Satır × ${processedResult.tableMeta.col_count || 1} Sütun • ${TableClassifier.TYPE_NAMES[type] || type}`;
+    const rowCount = processedResult.tableMeta ? processedResult.tableMeta.row_count : 1;
+    const colCount = processedResult.tableMeta ? processedResult.tableMeta.col_count : 1;
+    stageMeta.textContent = `${rowCount} Satır × ${colCount} Sütun • ${TableClassifier.TYPE_NAMES[type] || type}`;
 
     // Render Table Grid
     renderTableGrid(tableData.cells || [], items);
@@ -289,7 +405,7 @@
     renderQueueList(items);
 
     // Render SVG Trajectory Lines
-    setTimeout(renderTrajectoryLines, 50);
+    setTimeout(renderTrajectoryLines, 60);
   }
 
   // Render HTML Table with numbered Badges
@@ -382,7 +498,10 @@
     const items = processedResult.items;
     if (items.length < 2) return;
 
-    const wrapRect = document.getElementById('table-canvas-wrap').getBoundingClientRect();
+    const wrap = document.getElementById('table-canvas-wrap');
+    if (!wrap) return;
+
+    const wrapRect = wrap.getBoundingClientRect();
     const points = [];
 
     items.forEach(it => {
@@ -448,18 +567,19 @@
     const cellEl = document.getElementById(`cell-el-${item.row}-${item.col}`);
     if (cellEl) {
       cellEl.classList.add('cell-speaking-active');
+      cellEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
     }
 
-    const stepEl = document.getElementById(`step-item-${stepIdx}`);
-    if (stepEl) {
-      stepEl.classList.add('active');
-      stepEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    const queueEl = document.getElementById(`step-item-${stepIdx}`);
+    if (queueEl) {
+      queueEl.classList.add('active');
+      queueEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
     }
   }
 
-  // TTS Speech Player
+  // Speech Sequencing
   function speakCurrentSequence() {
-    if (!synth || !processedResult || !processedResult.items) return;
+    if (!synth || !isPlaying || !processedResult || !processedResult.items) return;
     if (currentStepIndex >= processedResult.items.length) {
       stopSpeech();
       return;
@@ -469,18 +589,7 @@
     highlightStep(currentStepIndex);
 
     let textToSpeak = item.fullSentenceText || item.text || '';
-    const isBKeyValue = (item.table_type === 'B_KEY_VALUE' || processedResult?.tableType === 'B_KEY_VALUE');
-    if (isBKeyValue) {
-      textToSpeak = textToSpeak.replace(/^Satır\s+[^,]+,\s*Sütun\s+[^,]+,\s*Değer\s+/i, '');
-      textToSpeak = textToSpeak.replace(/^Satır\s+[^,]+,\s*Sütun\s+[^,:]+[:\-]?\s*/i, '');
-      textToSpeak = textToSpeak.replace(/^Satır\s+[^,:]+[:\-]?\s*/i, '');
-      textToSpeak = textToSpeak.replace(/^Sütun\s+[^,:]+[:\-]?\s*/i, '');
-      textToSpeak = textToSpeak.replace(/\[Satır\s+[^\]]+\]\s*/gi, '');
-      textToSpeak = textToSpeak.replace(/\[Sütun\s+[^\]]+\]\s*/gi, '');
-    }
-
     textToSpeak = textToSpeak
-      .replace(/=/g, ' eşittir ')
       .replace(/×/g, ' çarpı ')
       .replace(/\*/g, ' çarpı ')
       .replace(/\+/g, ' artı ')
@@ -492,61 +601,37 @@
       .replace(/€/g, ' Euro ')
       .trim();
 
-    if (!textToSpeak) {
-      currentStepIndex++;
-      speakCurrentSequence();
-      return;
-    }
-
     const utterance = new SpeechSynthesisUtterance(textToSpeak);
     utterance.lang = 'tr-TR';
     utterance.rate = speechRate;
     if (selectedVoice) utterance.voice = selectedVoice;
 
     utterance.onend = () => {
-      if (isPlaying) {
-        currentStepIndex++;
-        setTimeout(() => {
-          if (isPlaying) speakCurrentSequence();
-        }, 180);
-      }
+      if (!isPlaying) return;
+      currentStepIndex++;
+      setTimeout(speakCurrentSequence, 350);
     };
 
-    utterance.onerror = (e) => {
-      if (isPlaying) {
-        currentStepIndex++;
-        setTimeout(() => {
-          if (isPlaying) speakCurrentSequence();
-        }, 180);
-      }
+    utterance.onerror = () => {
+      if (!isPlaying) return;
+      currentStepIndex++;
+      speakCurrentSequence();
     };
 
     synth.speak(utterance);
   }
 
   function speakSingleItem(item) {
-    if (!synth || !item) return;
-    stopSpeech();
+    if (!synth) return;
+    synth.cancel();
 
-    const idx = processedResult.items.indexOf(item);
-    if (idx !== -1) {
-      currentStepIndex = idx;
-      highlightStep(idx);
+    if (processedResult && processedResult.items) {
+      const idx = processedResult.items.indexOf(item);
+      if (idx >= 0) highlightStep(idx);
     }
 
     let textToSpeak = item.fullSentenceText || item.text || '';
-    const isBKeyValue = (item.table_type === 'B_KEY_VALUE' || processedResult?.tableType === 'B_KEY_VALUE');
-    if (isBKeyValue) {
-      textToSpeak = textToSpeak.replace(/^Satır\s+[^,]+,\s*Sütun\s+[^,]+,\s*Değer\s+/i, '');
-      textToSpeak = textToSpeak.replace(/^Satır\s+[^,]+,\s*Sütun\s+[^,:]+[:\-]?\s*/i, '');
-      textToSpeak = textToSpeak.replace(/^Satır\s+[^,:]+[:\-]?\s*/i, '');
-      textToSpeak = textToSpeak.replace(/^Sütun\s+[^,:]+[:\-]?\s*/i, '');
-      textToSpeak = textToSpeak.replace(/\[Satır\s+[^\]]+\]\s*/gi, '');
-      textToSpeak = textToSpeak.replace(/\[Sütun\s+[^\]]+\]\s*/gi, '');
-    }
-
     textToSpeak = textToSpeak
-      .replace(/=/g, ' eşittir ')
       .replace(/×/g, ' çarpı ')
       .replace(/\*/g, ' çarpı ')
       .replace(/\+/g, ' artı ')
@@ -578,6 +663,102 @@
     playBtn.classList.remove('playing');
     document.querySelectorAll('.cell-speaking-active').forEach(el => el.classList.remove('cell-speaking-active'));
     document.querySelectorAll('.order-step-item.active').forEach(el => el.classList.remove('active'));
+  }
+
+  // =========================================================================
+  // File Upload Handlers (Direct JSON and PDF in Lab)
+  // =========================================================================
+  if (labJsonBtn && labJsonInput) {
+    labJsonBtn.addEventListener('click', () => labJsonInput.click());
+    labJsonInput.addEventListener('change', async (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+
+      try {
+        const text = await readFileAsText(file);
+        let parsed = null;
+        try {
+          parsed = JSON.parse(text);
+        } catch {
+          parsed = JSON.parse(`[${text.replace(/^,/, '').replace(/,$/, '').trim()}]`);
+        }
+
+        const bboxes = (typeof BBoxParser !== 'undefined') ? BBoxParser.parse(parsed) : [];
+        const tables = [];
+
+        // Extract raw table objects from JSON
+        const rawTables = (typeof BBoxParser !== 'undefined') ? BBoxParser._extractRawTableObjects(parsed) : [];
+        if (rawTables.length > 0) {
+          rawTables.forEach((t, idx) => {
+            tables.push({
+              id: t.id || `uploaded-tbl-${idx + 1}`,
+              page: t.page || 1,
+              type: t.type || 'table',
+              cells: t.cells || [],
+              words: t.words || [],
+              coords: t.coords || t.bbox || [50, 50, 500, 300]
+            });
+          });
+        }
+
+        if (tables.length > 0) {
+          userUploadedTables = tables.map((t, idx) => ({
+            id: `user-tbl-${idx + 1}`,
+            name: `${file.name.replace('.json', '')} #${idx + 1}`,
+            type: t.type || 'A_MATRIX',
+            typeName: TableClassifier.TYPE_NAMES[t.type] || t.type,
+            desc: `${t.cells ? t.cells.length : 0} Hücre • Yüklenen JSON`,
+            isUserUploaded: true,
+            data: t
+          }));
+
+          renderUserUploadedTables();
+          activeSample = userUploadedTables[0];
+          renderSampleList();
+          loadTable(activeSample.data, activeSample.type, activeSample.name);
+        } else {
+          // Wrap entire JSON if it's a single table object
+          const singleObj = {
+            id: 'uploaded-single-table',
+            name: file.name.replace('.json', ''),
+            type: parsed.type || parsed.forced_type || 'A_MATRIX',
+            typeName: TableClassifier.TYPE_NAMES[parsed.type] || 'Yüklenen Tablo',
+            desc: 'Yüklenen JSON dosyası.',
+            isUserUploaded: true,
+            data: parsed
+          };
+          userUploadedTables = [singleObj];
+          renderUserUploadedTables();
+          activeSample = singleObj;
+          renderSampleList();
+          loadTable(singleObj.data, singleObj.type, singleObj.name);
+        }
+      } catch (err) {
+        alert('JSON yükleme hatası: ' + err.message);
+      }
+    });
+  }
+
+  if (labPdfBtn && labPdfInput) {
+    labPdfBtn.addEventListener('click', () => labPdfInput.click());
+    labPdfInput.addEventListener('change', (e) => {
+      const file = e.target.files[0];
+      if (file) {
+        const label = document.getElementById('lab-pdf-label');
+        if (label) label.textContent = file.name;
+      }
+    });
+  }
+
+  if (labSyncBtn) {
+    labSyncBtn.addEventListener('click', () => {
+      syncFromMainEditor();
+      if (userUploadedTables.length > 0) {
+        alert(`Ana editörden ${userUploadedTables.length} adet tablo başarıyla çekildi!`);
+      } else {
+        alert('Ana editörde henüz yüklenmiş bir tablo bulunamadı. Lütfen önce ana arayüzde PDF ve JSON yükleyin.');
+      }
+    });
   }
 
   // Event Listeners
@@ -669,8 +850,12 @@
     setTimeout(renderTrajectoryLines, 100);
   });
 
-  // Initial Load
+  // Initial Load & Automatic Sync from Main Editor
   renderSampleList();
-  loadTable(activeSample.data, activeSample.type, activeSample.name);
+  syncFromMainEditor();
+
+  if (!activeSample || !activeSample.isUserUploaded) {
+    loadTable(activeSample.data, activeSample.type, activeSample.name);
+  }
 
 })();

@@ -377,6 +377,48 @@ function initApp() {
     if (window.tableInspector) {
       window.tableInspector.setTables(state.detectedTables, state.parsedBBoxes, state.activePage);
     }
+
+    // Auto-sync tables to localStorage & BroadcastChannel for Table Lab / Inspector
+    broadcastAndSaveTableState();
+  }
+
+  function broadcastAndSaveTableState() {
+    try {
+      const payload = {
+        pdfFileName: state.pdfFileName || '',
+        jsonFileName: state.jsonFileName || '',
+        detectedTables: (state.detectedTables || []).map(t => ({
+          id: t.id,
+          page: t.page || 1,
+          type: t.type || 'A_MATRIX',
+          coords: t.coords || (t.cells && t.cells[0] ? t.cells[0].rawCoords : [50, 50, 450, 250]),
+          cells: (t.cells || []).map(c => ({
+            id: c.id,
+            text: c.text,
+            rawCoords: c.rawCoords || c.bbox,
+            bbox: c.rawCoords || c.bbox,
+            abs_coords: c.rawCoords || c.bbox,
+            row: c.row,
+            col: c.col,
+            rowspan: c.rowspan,
+            colspan: c.colspan,
+            table_order_id: c.table_order_id,
+            table_order_label: c.table_order_label,
+            fullSentenceText: c.fullSentenceText || c.text,
+            cell_type: c.cell_type
+          }))
+        })),
+        rawJsonData: state.rawJsonData || null,
+        timestamp: Date.now()
+      };
+      localStorage.setItem('directly_detect_bbox_shared_data', JSON.stringify(payload));
+      if ('BroadcastChannel' in window) {
+        const bc = new BroadcastChannel('directly_detect_bbox_sync');
+        bc.postMessage(payload);
+      }
+    } catch (e) {
+      console.warn('[Sync] Storage write warning:', e);
+    }
   }
 
   function renderTablesModal() {
