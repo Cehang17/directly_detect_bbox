@@ -554,7 +554,32 @@ class TableClassifier {
 
     rowGroups.sort((a, b) => a.minY0 - b.minY0);
 
-    // 2. In each row, sort cells strictly left to right
+    const hasExplicitGrid = validCells.filter(c => c.row !== undefined && c.col !== undefined).length >= validCells.length * 0.5;
+
+    // 2. Discover global column clusters across the entire table
+    const colClusters = [];
+    validCells.forEach(c => {
+      const box = getCoords(c);
+      const midX = (box[0] + box[2]) / 2;
+      const w = box[2] - box[0];
+      const match = colClusters.find(cl => Math.abs(cl.midX - midX) < Math.max(25, w * 0.4));
+      if (match) {
+        match.points.push(midX);
+        match.minX0 = Math.min(match.minX0, box[0]);
+        match.maxX1 = Math.max(match.maxX1, box[2]);
+        match.midX = match.points.reduce((a, b) => a + b, 0) / match.points.length;
+      } else {
+        colClusters.push({
+          midX,
+          minX0: box[0],
+          maxX1: box[2],
+          points: [midX]
+        });
+      }
+    });
+    colClusters.sort((a, b) => a.minX0 - b.minX0);
+
+    // 3. In each row, assign coordinates and preserve/calculate column indices
     const structuredCells = [];
     rowGroups.forEach((rg, rIdx) => {
       rg.cells.sort((a, b) => {
@@ -565,12 +590,29 @@ class TableClassifier {
 
       rg.cells.forEach((c, cIdx) => {
         const coords = getCoords(c);
+        let assignedCol = (c.col !== undefined && c.col !== null) ? Number(c.col) : undefined;
+        let assignedRow = (c.row !== undefined && c.row !== null) ? Number(c.row) : rIdx;
+
+        if (assignedCol === undefined) {
+          const midX = (coords[0] + coords[2]) / 2;
+          let bestCol = 0;
+          let bestDist = Infinity;
+          colClusters.forEach((cl, clIdx) => {
+            const d = Math.abs(cl.midX - midX);
+            if (d < bestDist) {
+              bestDist = d;
+              bestCol = clIdx;
+            }
+          });
+          assignedCol = bestCol;
+        }
+
         structuredCells.push({
           ...c,
           id: c.id || `cell-${structuredCells.length + 1}`,
           rawCoords: coords,
-          row: rIdx,
-          col: cIdx,
+          row: hasExplicitGrid && c.row !== undefined ? Number(c.row) : assignedRow,
+          col: assignedCol,
           rowspan: c.rowspan || 1,
           colspan: c.colspan || 1
         });
@@ -581,7 +623,7 @@ class TableClassifier {
 
     return {
       rows: rowIntervals,
-      cols: [],
+      cols: colClusters,
       cells: structuredCells
     };
   }
@@ -668,10 +710,22 @@ class TableClassifier {
       return (c.row === 0) && (cellW > tblW * 0.55 || (c.colspan && c.colspan >= 2));
     });
 
-    const hasMultiLevelHeaders = hasTopBanner || cells.some(c => {
+    // Check if there are multiple header rows before first numeric data row
+    let detectedFirstDataRow = 1;
+    const uniqueRowsList = [...new Set(cells.map(c => c.row !== undefined ? c.row : 0))].sort((a, b) => a - b);
+    for (const r of uniqueRowsList) {
+      const rowCells = cells.filter(c => c.row === r);
+      const hasNumbers = rowCells.some(c => /\d{2,}/.test(c.text || ''));
+      if (hasNumbers && r > (hasTopBanner ? 1 : 0)) {
+        detectedFirstDataRow = r;
+        break;
+      }
+    }
+
+    const hasMultiLevelHeaders = hasTopBanner || detectedFirstDataRow >= 2 || cells.some(c => {
       const coords = Array.isArray(c.rawCoords) && c.rawCoords.length >= 4 ? c.rawCoords : null;
       const cellW = coords ? (coords[2] - coords[0]) : 0;
-      return (c.row <= 1) && (cellW > tblW * 0.40 || (c.colspan && c.colspan >= 2) || (c.rowspan && c.rowspan >= 2));
+      return (c.row <= 1) && (cellW > tblW * 0.35 || (c.colspan && c.colspan >= 2) || (c.rowspan && c.rowspan >= 2));
     });
 
     return {
@@ -758,15 +812,106 @@ class TableClassifier {
     }
 
     // Header Cells (all cells before firstDataRow, excluding top banner)
-    const headerCells = sortedCells.filter(c => c.row < firstDataRow && c !== topBannerCell);
+    const headerCells = sortedCells.filter(c => c.row < firstDataRow && c !== topBannerCell && (c.text || '').trim().length > 0);
 
-    // Column Headers Map: col_idx -> Header Text
+    // Identify and repair split / spanning header cells in each header row
+    const headerRows = [...new Set(headerCells.map(h => h.row || 0))].sort((a, b) => a - b);
+    headerRows.forEach(r => {
+      const rHeaders = headerCells.filter(h => h.row === r).sort((a, b) => (a.col || 0) - (b.col || 0));
+      for (let i = 0; i < rHeaders.length - 1; i++) {
+        const hA = rHeaders[i];
+        const hB = rHeaders[i + 1];
+        const tA = (hA.text || '').trim();
+        const tB = (hB.text || '').trim();
+        if (tA && tB && (tB.startsWith(tA) || (tA.length <= 6 && tB.length >= 8 && Math.abs((hB.col || 0) - (hA.col || 0)) <= 1))) {
+          hB.col = Math.min(hA.col !== undefined ? hA.col : 0, hB.col !== undefined ? hB.col : 0);
+          hB.colspan = Math.max((hA.colspan || 1) + (hB.colspan || 1), 2);
+          const boxA = hA.rawCoords || hA.bbox || [0, 0, 0, 0];
+          const boxB = hB.rawCoords || hB.bbox || [0, 0, 0, 0];
+          hB.rawCoords = [Math.min(boxA[0], boxB[0]), Math.min(boxA[1], boxB[1]), Math.max(boxA[2], boxB[2]), Math.max(boxA[3], boxB[3])];
+          // Keep the cleaner/longer title
+          hB.text = tB.length >= tA.length ? tB : tA;
+          hA._mergedInto = hB;
+        }
+      }
+
+      rHeaders.forEach(h => {
+        const hBox = h.rawCoords || h.bbox || [0, 0, 0, 0];
+        const hWidth = hBox[2] - hBox[0];
+        if (hWidth >= tblW * 0.35 && (!h.colspan || h.colspan < 2)) {
+          h.colspan = 2;
+        }
+      });
+    });
+
+    const activeHeaderCells = headerCells.filter(h => !h._mergedInto);
+
+    // Column Headers Map: col_idx -> Header Text (Hierarchical chain from top to bottom)
     const colHeaders = new Map();
-    for (let cIdx = 0; cIdx < (metrics.n_cols + 5); cIdx++) {
-      const hCells = headerCells.filter(c => c.col === cIdx);
-      if (hCells.length > 0) {
-        const mergedHeaderText = hCells.map(c => c.text).join(' - ').trim();
-        colHeaders.set(cIdx, mergedHeaderText);
+    const maxCols = Math.max(metrics.n_cols || 1, ...sortedCells.map(c => (c.col || 0) + 1));
+
+    for (let cIdx = 0; cIdx < (maxCols + 5); cIdx++) {
+      // Find data cells in column cIdx to get the column X-bounds
+      const dataInCol = sortedCells.filter(c => c.col === cIdx && c.row >= firstDataRow);
+      let colX0 = 0, colX1 = 0;
+      if (dataInCol.length > 0) {
+        const boxes = dataInCol.map(c => c.rawCoords || c.bbox || [0, 0, 0, 0]);
+        colX0 = Math.min(...boxes.map(b => b[0]));
+        colX1 = Math.max(...boxes.map(b => b[2]));
+      }
+
+      const applicableHeaders = activeHeaderCells.filter(h => {
+        const hCol = h.col !== undefined ? h.col : 0;
+        const hColSpan = h.colspan || 1;
+        // 1. Explicit column index match or colspan coverage
+        if (cIdx >= hCol && cIdx < hCol + hColSpan) return true;
+
+        // 2. Spatial overlap with column cIdx data cells
+        if (colX1 > colX0) {
+          const hBox = h.rawCoords || h.bbox || [0, 0, 0, 0];
+          const overlap = Math.min(colX1, hBox[2]) - Math.max(colX0, hBox[0]);
+          if (overlap >= 15 || overlap / (colX1 - colX0) > 0.25) return true;
+        }
+
+        // 3. Header hierarchy parentage: check if sub-headers in lower row belong to cIdx
+        const subHeadersUnder = headerCells.filter(sub => (sub.row || 0) > (h.row || 0) && (sub.col === cIdx));
+        if (subHeadersUnder.length > 0) {
+          const hBox = h.rawCoords || h.bbox || [0, 0, 0, 0];
+          const subBoxes = subHeadersUnder.map(s => s.rawCoords || s.bbox || [0, 0, 0, 0]);
+          const subXMid = (subBoxes[0][0] + subBoxes[0][2]) / 2;
+          if (subXMid >= hBox[0] - 25 && subXMid <= hBox[2] + 25) return true;
+        }
+
+        return false;
+      });
+
+      // Sort applicable headers by row ascending (Level 1 -> Level 2)
+      applicableHeaders.sort((a, b) => (a.row || 0) - (b.row || 0));
+
+      // Remove duplicate phrases and clean text
+      const cleanHeaderTexts = [];
+      applicableHeaders.forEach(h => {
+        let txt = (h.text || '').trim();
+        if (!txt) return;
+
+        // Strip already present parent text from sub-header text
+        cleanHeaderTexts.forEach(existing => {
+          if (txt.includes(existing)) {
+            txt = txt.replace(existing, '').trim();
+          }
+        });
+
+        // Strip sub-header text if repeated in parent
+        const isSubstring = cleanHeaderTexts.some(ex => ex.includes(txt));
+        if (isSubstring) return;
+
+        if (txt && !cleanHeaderTexts.includes(txt)) {
+          cleanHeaderTexts.push(txt);
+        }
+      });
+
+      if (cleanHeaderTexts.length > 0) {
+        colHeaders.set(cIdx, cleanHeaderTexts.join(', '));
       }
     }
 
