@@ -817,8 +817,6 @@ function initApp() {
       C_PARALLEL_TEXT:'📄 Her sütun bağımsız paragraf. Okuma: sütun sütun, yukarıdan aşağıya.',
       D_MERGED_CELLS: '🔀 Birleşik hücreli hiyerarşi. Okuma: önce başlık satırları, sonra veri.',
       E_FORMULA:      '🧮 Matematiksel ifade. Okuma: formül bağlamıyla birlikte sıralanır.',
-      F_HYBRID_NOTE:  '📝 Dipnotlu tablo. Okuma: önce veri satırları, en son dipnot blokları.'
-    };
     if (elements.sidebarTableInfo) {
       const isTable = !!(bboxItem.table_type || bboxItem.category === 'Table Cell' || (bboxItem.table_order_id !== null && bboxItem.table_order_id !== undefined));
       elements.sidebarTableInfo.style.display = isTable ? 'block' : 'none';
@@ -828,6 +826,32 @@ function initApp() {
         if (elements.sidebarTableOrderBadge) elements.sidebarTableOrderBadge.textContent = `Tablo Sırası: #${bboxItem.table_order_id !== undefined && bboxItem.table_order_id !== null ? bboxItem.table_order_id : '1'}`;
         if (elements.sidebarTableTypeSelect) elements.sidebarTableTypeSelect.value = curType;
         if (elements.sidebarTableTypeDesc) elements.sidebarTableTypeDesc.textContent = TABLE_TYPE_DESCS[curType] || 'Tablo tipini değiştirerek okuma sırasını yeniden hesaplayabilirsiniz.';
+
+        // Render Table Cell Accessibility (a11y) Panel
+        const a11yContainer = document.getElementById('a11y-panel-container');
+        if (a11yContainer && typeof renderA11yPanel === 'function') {
+          let parentTable = (state.detectedTables || []).find(t => (t.id && t.id === bboxItem.table_id) || (Array.isArray(t.cells) && t.cells.some(c => String(c.id) === String(bboxItem.id))));
+          if (!parentTable) {
+            const siblings = findConnectedTableCells(bboxItem, state.parsedBBoxes);
+            parentTable = {
+              id: bboxItem.table_id || `table-p${bboxItem.page || 1}-1`,
+              cells: siblings,
+              type: curType
+            };
+          }
+          if (typeof enrichTable === 'function') {
+            parentTable = enrichTable(parentTable);
+          }
+          renderA11yPanel(a11yContainer, bboxItem, parentTable, (updatedTable) => {
+            if (Array.isArray(state.detectedTables)) {
+              const tIdx = state.detectedTables.findIndex(t => t.id === updatedTable.id);
+              if (tIdx >= 0) state.detectedTables[tIdx] = updatedTable;
+            }
+          });
+        }
+      } else {
+        const a11yContainer = document.getElementById('a11y-panel-container');
+        if (a11yContainer) a11yContainer.innerHTML = '';
       }
     }
 
