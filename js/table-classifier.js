@@ -804,6 +804,7 @@ class TableClassifier {
     const topBannerText = data.topBannerText || '';
     const topBannerCell = data.topBannerCell;
     const metrics = data.metrics || { n_rows: 1, n_cols: 1 };
+    const tableBox = data.tableBox || null;
     const items = [];
     let currentSentenceNum = startSentenceNumber;
     let tableOrderCounter = 1;
@@ -1115,11 +1116,19 @@ class TableClassifier {
 
       for (const c of cells) {
         const lower = (c.text || '').toLowerCase().trim();
+        const coords = Array.isArray(c.rawCoords) && c.rawCoords.length >= 4 ? c.rawCoords : (c.bbox || null);
+        const cellWidth = coords ? (coords[2] - coords[0]) : 0;
+        const tblWidth = (tableBox && Array.isArray(tableBox) && tableBox.length >= 4) ? (tableBox[2] - tableBox[0]) : 300;
+        const isWide = cellWidth > tblWidth * 0.60 || c.colspan >= 2;
+
         const isFootnote = lower.startsWith('not:') ||
           lower.startsWith('dipnot') ||
           lower.startsWith('*') ||
           lower.startsWith('kaynak:') ||
-          (c.colspan >= 2 && c.row >= metrics.n_rows - 1);
+          lower.startsWith('source:') ||
+          lower.startsWith('açıklama:') ||
+          ((c.colspan >= 2 || isWide) && c.row >= metrics.n_rows - 1);
+
         if (isFootnote) {
           footnoteCells.push(c);
         } else {
@@ -1137,25 +1146,40 @@ class TableClassifier {
       for (const c of dataCells) {
         const tOrder = tableOrderCounter++;
         let fullText = c.text;
+        let cType = 'data';
+        let ancestors = [];
+
         if (c.row < firstDataRow) {
           fullText = colHeaders.get(c.col) || c.text;
+          cType = 'col_header';
         } else if (c.col === 0) {
           fullText = rowHeaders.get(c.row) || c.text;
+          cType = 'row_header';
         } else {
           const rowInfo = (rowHeaders.get(c.row) || '').trim();
           const colInfo = (colHeaders.get(c.col) || '').trim();
           const cellVal = (c.text || '').trim();
 
           const parts = [];
-          if (rowInfo && rowInfo !== cellVal) parts.push(rowInfo);
-          if (colInfo && colInfo !== cellVal && colInfo !== rowInfo) parts.push(colInfo);
+          if (rowInfo && rowInfo !== cellVal) {
+            parts.push(rowInfo);
+            ancestors.push(rowInfo);
+          }
+          if (colInfo && colInfo !== cellVal && colInfo !== rowInfo) {
+            parts.push(colInfo);
+            ancestors.push(colInfo);
+          }
           if (cellVal) parts.push(cellVal);
 
           fullText = parts.length > 0 ? parts.join(', ').trim() : cellVal;
         }
 
         const cellItems = this._expandCellIntoSentences(c, pageNum, currentSentenceNum, tOrder, tableId, tableType, tableIndex, fullText);
-        cellItems.forEach(it => items.push(it));
+        cellItems.forEach(it => {
+          it.cell_type = cType;
+          it.header_ancestors = ancestors;
+          items.push(it);
+        });
         if (cellItems.length > 0) {
           currentSentenceNum = Math.max(...cellItems.map(it => it.sentence_id)) + 1;
         }
@@ -1165,12 +1189,23 @@ class TableClassifier {
       for (const fn of footnoteCells) {
         const tOrder = tableOrderCounter++;
         const fnText = (fn.text || '').trim();
-        const fullText = fnText.toLowerCase().startsWith('not') || fnText.startsWith('*') || fnText.toLowerCase().startsWith('dipnot')
-          ? fnText
-          : `Dipnot: ${fnText}`;
+        let fullText = fnText;
+        if (fnText.startsWith('*')) {
+          const clean = fnText.replace(/^[\*\s]+/, '');
+          if (/^(dipnot|not|açıklama|kaynak)/i.test(clean)) {
+            fullText = clean;
+          } else {
+            fullText = `Tablo Dipnotu: ${clean}`;
+          }
+        } else if (!/^(dipnot|not|açıklama|kaynak)/i.test(fnText)) {
+          fullText = `Tablo Dipnotu: ${fnText}`;
+        }
+
         const cellItems = this._expandCellIntoSentences(fn, pageNum, currentSentenceNum, tOrder, tableId, tableType, tableIndex, fullText);
         cellItems.forEach(it => {
           it.category = 'Table Footnote';
+          it.cell_type = 'footnote';
+          it.header_ancestors = ['Tablo Dipnotu'];
           items.push(it);
         });
         if (cellItems.length > 0) {

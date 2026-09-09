@@ -168,24 +168,24 @@
     },
     {
       id: 'sample-hybrid',
-      name: 'Ürün Fiyat Listesi & Dipnot',
+      name: 'Personel Hakları & Dipnot (F_HYBRID_NOTE)',
       type: 'F_HYBRID_NOTE',
       typeName: 'Dipnotlu Hibrit Tablo',
-      desc: 'Ana veri tablosu bittikten sonra en alttaki dipnot bloğu okunur.',
+      desc: 'Ana veri matrisi (Personel, Yemek, Yol) bittikten sonra en alttaki dipnot bloğu izole olarak okunur.',
       data: {
-        table_id: 'table-f-hybrid',
+        table_id: 'table-f-hybrid-personel',
         forced_type: 'F_HYBRID_NOTE',
         cells: [
-          { row: 0, col: 0, text: 'Ürün Adı' },
-          { row: 0, col: 1, text: 'Stok Miktarı' },
-          { row: 0, col: 2, text: 'Birim Fiyat' },
-          { row: 1, col: 0, text: 'Bulut Sunucu Paketi' },
-          { row: 1, col: 1, text: '15 Adet' },
-          { row: 1, col: 2, text: '$1.500' },
-          { row: 2, col: 0, text: 'Veritabanı Lisansı' },
-          { row: 2, col: 1, text: '8 Adet' },
-          { row: 2, col: 2, text: '$3.200' },
-          { row: 3, col: 0, text: '* Not: Fiyatlara KDV dahil değildir. Güncel TCMB satış kuru geçerlidir.', colspan: 3 }
+          { row: 0, col: 0, text: 'Personel Unvanı' },
+          { row: 0, col: 1, text: 'Günlük Yemek Ücreti' },
+          { row: 0, col: 2, text: 'Yol Yardımı' },
+          { row: 1, col: 0, text: 'Uzman' },
+          { row: 1, col: 1, text: '180 ₺' },
+          { row: 1, col: 2, text: 'Yok' },
+          { row: 2, col: 0, text: 'Müdür' },
+          { row: 2, col: 1, text: '250 ₺' },
+          { row: 2, col: 2, text: 'Var (Araç Tahsisi)' },
+          { row: 3, col: 0, text: '* Dipnot: Yukarıda belirtilen yol yardımı ve yemek ücretleri 1 Ocak 2024 itibarıyla geçerli olan brüt tutarlardır. Vergi kesintileri uygulanacaktır.', colspan: 3 }
         ]
       }
     }
