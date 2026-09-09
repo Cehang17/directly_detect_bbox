@@ -59,7 +59,12 @@ class TableClassifier {
     const metrics = this.calculateTableMetrics(grid, normalizedCells, tableBox);
 
     // Step 4: Classify table type (6 categories)
-    const tableType = tableData.forced_type || tableData.table_type || tableData.type || (normalizedCells.find(c => c.table_type)?.table_type) || this.classifyTable(grid, normalizedCells, metrics);
+    const explicitType = (tableData.forced_type && this.TYPES[tableData.forced_type])
+      || (tableData.table_type && this.TYPES[tableData.table_type])
+      || (tableData.type && this.TYPES[tableData.type])
+      || (normalizedCells.find(c => c.table_type && this.TYPES[c.table_type])?.table_type);
+
+    const tableType = explicitType || this.classifyTable(grid, normalizedCells, metrics);
 
     // Step 5: Structure headers, multi-line mergers, and footer notes
     const structuredData = this.structureTableHeadersAndNotes(grid, normalizedCells, tableType, tableBox, metrics);
@@ -157,6 +162,7 @@ class TableClassifier {
 
       // If words are available, associate words with each cell to populate text
       if (cells.length > 0 && Array.isArray(tableData.words) && tableData.words.length > 0) {
+        const matchedWords = new Set();
         cells.forEach(c => {
           const [cx0, cy0, cx1, cy1] = c.rawCoords;
           const insideWords = tableData.words.filter(w => {
@@ -167,6 +173,7 @@ class TableClassifier {
             return wx >= cx0 - 4 && wx <= cx1 + 4 && wy >= cy0 - 4 && wy <= cy1 + 4;
           });
           if (insideWords.length > 0) {
+            insideWords.forEach(w => matchedWords.add(w));
             insideWords.sort((a, b) => {
               const bA = a.bbox || a.coords;
               const bB = b.bbox || b.coords;
@@ -182,7 +189,51 @@ class TableClassifier {
             }
           }
         });
+
+        // If there are words in tableData.words not covered by any cell, cluster them into extra cells!
+        const uncoveredWords = tableData.words.filter(w => !matchedWords.has(w));
+        if (uncoveredWords.length > 0) {
+          const extraCells = this._clusterWordsIntoCells(uncoveredWords);
+          if (extraCells.length > 0) {
+            cells.push(...extraCells);
+          }
+        }
       }
+
+      // Deduplicate overlapping slice cells (e.g. merged headers split across rows/cols)
+      const deduplicatedCells = [];
+      cells.forEach(c => {
+        const boxC = c.rawCoords || [0, 0, 0, 0];
+        const textC = (c.text || '').trim().toLowerCase();
+        const existing = deduplicatedCells.find(ex => {
+          const boxEx = ex.rawCoords || [0, 0, 0, 0];
+          const textEx = (ex.text || '').trim().toLowerCase();
+          const interX0 = Math.max(boxC[0], boxEx[0]);
+          const interY0 = Math.max(boxC[1], boxEx[1]);
+          const interX1 = Math.min(boxC[2], boxEx[2]);
+          const interY1 = Math.min(boxC[3], boxEx[3]);
+          const interW = Math.max(0, interX1 - interX0);
+          const interH = Math.max(0, interY1 - interY0);
+          const interArea = interW * interH;
+          const minArea = Math.min((boxC[2]-boxC[0])*(boxC[3]-boxC[1]), (boxEx[2]-boxEx[0])*(boxEx[3]-boxEx[1]));
+          return (interArea / (minArea || 1) > 0.60) && (textC === textEx || textC.includes(textEx) || textEx.includes(textC));
+        });
+
+        if (existing) {
+          const boxEx = existing.rawCoords || [0, 0, 0, 0];
+          existing.rawCoords = [
+            Math.min(boxEx[0], boxC[0]), Math.min(boxEx[1], boxC[1]),
+            Math.max(boxEx[2], boxC[2]), Math.max(boxEx[3], boxC[3])
+          ];
+          if ((c.text || '').length > (existing.text || '').length) {
+            existing.text = c.text;
+          }
+        } else {
+          deduplicatedCells.push(c);
+        }
+      });
+
+      cells = deduplicatedCells.filter(c => (c.text || '').trim().length > 0);
       if (cells.length > 0) return cells;
     }
 
@@ -518,8 +569,8 @@ class TableClassifier {
           ...c,
           id: c.id || `cell-${structuredCells.length + 1}`,
           rawCoords: coords,
-          row: (c.row !== undefined && c.row !== null) ? c.row : rIdx,
-          col: (c.col !== undefined && c.col !== null) ? c.col : cIdx,
+          row: rIdx,
+          col: cIdx,
           rowspan: c.rowspan || 1,
           colspan: c.colspan || 1
         });
@@ -609,6 +660,20 @@ class TableClassifier {
       return (t.includes('Net Kar') && t.includes('Brüt Kar')) || (t.includes('Matrah') && t.includes('KDV'));
     });
 
+    // Check multi-level / irregular headers (e.g. top banner or wide level-1 header above sub-headers)
+    const tblW = (tableBox && Array.isArray(tableBox) && tableBox.length >= 4) ? (tableBox[2] - tableBox[0]) : 300;
+    const hasTopBanner = cells.some(c => {
+      const coords = Array.isArray(c.rawCoords) && c.rawCoords.length >= 4 ? c.rawCoords : null;
+      const cellW = coords ? (coords[2] - coords[0]) : 0;
+      return (c.row === 0) && (cellW > tblW * 0.55 || (c.colspan && c.colspan >= 2));
+    });
+
+    const hasMultiLevelHeaders = hasTopBanner || cells.some(c => {
+      const coords = Array.isArray(c.rawCoords) && c.rawCoords.length >= 4 ? c.rawCoords : null;
+      const cellW = coords ? (coords[2] - coords[0]) : 0;
+      return (c.row <= 1) && (cellW > tblW * 0.40 || (c.colspan && c.colspan >= 2) || (c.rowspan && c.rowspan >= 2));
+    });
+
     return {
       numeric_ratio: totalChars > 0 ? numericChars / totalChars : 0,
       math_density: totalChars > 0 ? mathEquationChars / totalChars : 0,
@@ -618,7 +683,8 @@ class TableClassifier {
       n_rows: Math.max(uniqueRows, grid.rows.length, 1),
       is_key_value_form: isKeyValueForm,
       has_bottom_note: hasBottomNote,
-      has_equation_syntax: hasEquationSyntax
+      has_equation_syntax: hasEquationSyntax,
+      has_multi_level_headers: hasMultiLevelHeaders
     };
   }
 
@@ -650,7 +716,7 @@ class TableClassifier {
     }
 
     // 5. D_MERGED_CELLS (Hierarchical / Colspan & Rowspan Merged Table):
-    if (metrics.merged_cell_ratio >= 0.12) {
+    if (metrics.merged_cell_ratio >= 0.12 || metrics.has_multi_level_headers) {
       return this.TYPES.D_MERGED_CELLS;
     }
 
@@ -668,17 +734,38 @@ class TableClassifier {
       return (a.col || 0) - (b.col || 0);
     });
 
-    // Top Header Banner (Row 0 spanning all columns)
-    const topBannerCell = sortedCells.find(c => c.row === 0 && (c.colspan >= metrics.n_cols - 1 || c.colspan > 2));
+    const tblW = (tableBox && Array.isArray(tableBox) && tableBox.length >= 4) ? (tableBox[2] - tableBox[0]) : 400;
+
+    // Top Header Banner (Row 0 cell spanning across all columns or width >= 55% of tableBox)
+    const topBannerCell = sortedCells.find(c => {
+      const box = c.rawCoords || c.bbox || [0, 0, 0, 0];
+      const w = box[2] - box[0];
+      return (c.row === 0 || c.row === undefined) && (c.colspan >= (metrics.n_cols || 4) - 1 || c.colspan > 2 || w >= tblW * 0.55);
+    });
     const topBannerText = topBannerCell ? topBannerCell.text.trim() : '';
-    const firstDataRow = topBannerCell ? 2 : 1;
+
+    // Determine first data row:
+    let firstDataRow = topBannerCell ? 2 : 1;
+    const uniqueRows = [...new Set(sortedCells.map(c => c.row || 0))].sort((a, b) => a - b);
+    for (const r of uniqueRows) {
+      if (topBannerCell && r === topBannerCell.row) continue;
+      const rowCells = sortedCells.filter(c => c.row === r && c !== topBannerCell);
+      const hasNumbers = rowCells.some(c => /\d{2,}/.test(c.text || ''));
+      if (hasNumbers && r > (topBannerCell ? 1 : 0)) {
+        firstDataRow = r;
+        break;
+      }
+    }
+
+    // Header Cells (all cells before firstDataRow, excluding top banner)
+    const headerCells = sortedCells.filter(c => c.row < firstDataRow && c !== topBannerCell);
 
     // Column Headers Map: col_idx -> Header Text
     const colHeaders = new Map();
     for (let cIdx = 0; cIdx < (metrics.n_cols + 5); cIdx++) {
-      const headerCells = sortedCells.filter(c => c.col === cIdx && c.row < firstDataRow && c !== topBannerCell);
-      if (headerCells.length > 0) {
-        const mergedHeaderText = headerCells.map(c => c.text).join(' - ').trim();
+      const hCells = headerCells.filter(c => c.col === cIdx);
+      if (hCells.length > 0) {
+        const mergedHeaderText = hCells.map(c => c.text).join(' - ').trim();
         colHeaders.set(cIdx, mergedHeaderText);
       }
     }
@@ -691,10 +778,12 @@ class TableClassifier {
 
     return {
       cells: sortedCells,
+      headerCells,
       colHeaders,
       rowHeaders,
       firstDataRow,
       topBannerText,
+      topBannerCell,
       tableBox,
       metrics
     };
@@ -713,6 +802,7 @@ class TableClassifier {
     const rowHeaders = data.rowHeaders || new Map();
     const firstDataRow = data.firstDataRow || 1;
     const topBannerText = data.topBannerText || '';
+    const topBannerCell = data.topBannerCell;
     const metrics = data.metrics || { n_rows: 1, n_cols: 1 };
     const items = [];
     let currentSentenceNum = startSentenceNumber;
@@ -1092,7 +1182,68 @@ class TableClassifier {
     }
 
     // =========================================================================
-    // Strategy 5: A_MATRIX & D_MERGED_CELLS (Z-order: row by row, col by col)
+    // Strategy 5: D_MERGED_CELLS (Hierarchical Multi-Level Headers & Merged Grid)
+    // =========================================================================
+    if (tableType === this.TYPES.D_MERGED_CELLS) {
+      const headerCells = data.headerCells || cells.filter(c => c.row < firstDataRow);
+
+      const sortedMergedCells = [...cells].sort((a, b) => {
+        if (a.row !== b.row) return (a.row || 0) - (b.row || 0);
+        return (a.col || 0) - (b.col || 0);
+      });
+
+      for (const c of sortedMergedCells) {
+        const tOrder = tableOrderCounter++;
+        let fullText = c.text;
+
+        if (c === topBannerCell || (c.row === 0 && topBannerText && c.text === topBannerText)) {
+          // Top Banner Header
+          fullText = c.text;
+        } else if (c.row < firstDataRow) {
+          // Header rows (Level 1, Level 2)
+          fullText = c.text;
+        } else if (c.col === 0) {
+          // Row header in first column (e.g. Marmara, İç Anadolu)
+          fullText = c.text;
+        } else {
+          // Data cell (e.g. 500.000, 650.000, Başarılı)
+          const rowInfo = (rowHeaders.get(c.row) || '').trim();
+          const [cx0, cy0, cx1, cy1] = getBox(c);
+
+          // Find overlapping column headers in header rows by X coordinate overlap
+          const colAncestors = headerCells.filter(h => {
+            if (h === topBannerCell) return false;
+            const [hx0, hy0, hx1, hy1] = getBox(h);
+            const xOverlap = Math.min(cx1, hx1) - Math.max(cx0, hx0);
+            return xOverlap > 5;
+          }).sort((a, b) => (a.row || 0) - (b.row || 0));
+
+          const headerTexts = colAncestors.map(h => (h.text || '').trim()).filter(Boolean);
+
+          const parts = [];
+          if (rowInfo && rowInfo !== c.text) parts.push(rowInfo);
+          headerTexts.forEach(ht => {
+            if (ht && !parts.includes(ht) && ht !== c.text) {
+              parts.push(ht);
+            }
+          });
+          if (c.text) parts.push(c.text);
+
+          fullText = parts.length > 0 ? parts.join(', ').trim() : c.text;
+        }
+
+        const cellItems = this._expandCellIntoSentences(c, pageNum, currentSentenceNum, tOrder, tableId, tableType, tableIndex, fullText);
+        cellItems.forEach(it => items.push(it));
+        if (cellItems.length > 0) {
+          currentSentenceNum = Math.max(...cellItems.map(it => it.sentence_id)) + 1;
+        }
+      }
+
+      return { items, nextSentenceNumber: currentSentenceNum, tableMeta: baseTableMeta };
+    }
+
+    // =========================================================================
+    // Strategy 6: A_MATRIX (Standard Matrix Data Table: Z-order: row by row, col by col)
     // =========================================================================
     const sortedMatrixCells = [...cells].sort((a, b) => {
       if (a.row !== b.row) return (a.row || 0) - (b.row || 0);
