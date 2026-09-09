@@ -810,13 +810,16 @@ function initApp() {
       : ((bboxItem.sentence_id !== undefined && bboxItem.sentence_id !== null) ? bboxItem.sentence_id : bboxItem.index);
     elements.bboxIdInput.value = displayId;
 
-    // Table information & Type Selector sync in sidebar
     const TABLE_TYPE_DESCS = {
       A_MATRIX:       '📊 Satır × Sütun matris. Okuma: soldan sağa, yukarıdan aşağıya (Z-yolu).',
       B_KEY_VALUE:    '🏷️ Etiket:Değer çifti. Okuma: her satırda sol=etiket → sağ=değer.',
       C_PARALLEL_TEXT:'📄 Her sütun bağımsız paragraf. Okuma: sütun sütun, yukarıdan aşağıya.',
       D_MERGED_CELLS: '🔀 Birleşik hücreli hiyerarşi. Okuma: önce başlık satırları, sonra veri.',
       E_FORMULA:      '🧮 Matematiksel ifade. Okuma: formül bağlamıyla birlikte sıralanır.',
+      F_HYBRID_NOTE:  '📝 Dipnotlu hibrit tablo. Okuma: ana tablo tamamlandıktan sonra dipnotlar okunur.',
+      NOT_TABLE:      '🚫 Tablo formatından çıkarıldı.'
+    };
+
     if (elements.sidebarTableInfo) {
       const isTable = !!(bboxItem.table_type || bboxItem.category === 'Table Cell' || (bboxItem.table_order_id !== null && bboxItem.table_order_id !== undefined));
       elements.sidebarTableInfo.style.display = isTable ? 'block' : 'none';
