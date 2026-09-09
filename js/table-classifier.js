@@ -1061,7 +1061,7 @@ class TableClassifier {
           if (colInfo && colInfo !== cellVal && colInfo !== rowInfo) parts.push(colInfo);
           if (cellVal) parts.push(cellVal);
 
-          fullText = parts.length > 0 ? parts.join(' ').trim() : cellVal;
+          fullText = parts.length > 0 ? parts.join(', ').trim() : cellVal;
         }
 
         const cellItems = this._expandCellIntoSentences(c, pageNum, currentSentenceNum, tOrder, tableId, tableType, tableIndex, fullText);
@@ -1111,7 +1111,7 @@ class TableClassifier {
           // Row header cell in first column
           fullText = rowHeaders.get(c.row) || c.text;
         } else {
-          // Data cell: [Satır Değeri] [Sütun Değeri] [Hücre Değeri]
+          // Data cell: [Satır Değeri], [Sütun Değeri], [Hücre Değeri]
           const rowInfo = (rowHeaders.get(c.row) || '').trim();
           const colInfo = (colHeaders.get(c.col) || '').trim();
           const cellVal = (c.text || '').trim();
@@ -1121,7 +1121,7 @@ class TableClassifier {
           if (colInfo && colInfo !== cellVal && colInfo !== rowInfo) parts.push(colInfo);
           if (cellVal) parts.push(cellVal);
 
-          fullText = parts.length > 0 ? parts.join(' ').trim() : cellVal;
+          fullText = parts.length > 0 ? parts.join(', ').trim() : cellVal;
         }
       }
 
