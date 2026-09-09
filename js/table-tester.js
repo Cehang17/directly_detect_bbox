@@ -105,6 +105,39 @@
       }
     },
     {
+      id: 'sample-d-user-sales',
+      name: '2024 Yarıyıl Satış & Hedef Raporu',
+      type: 'D_MERGED_CELLS',
+      typeName: 'Çok Seviyeli & Hiyerarşik Rapor',
+      desc: 'Üst Başlık + Satış Rakamları (₺) altındaki Ocak-Mart ve Nisan-Haziran alt kırılımları.',
+      data: {
+        table_id: 'table-d-user-sales',
+        forced_type: 'D_MERGED_CELLS',
+        coords: [233, 318, 1436, 510],
+        cells: [
+          { row: 0, col: 0, cell_coords: [18, 40, 255, 75], abs_coords: [251, 358, 488, 393], text: "Bölge" },
+          { row: 0, col: 1, cell_coords: [252, 40, 547, 75], abs_coords: [485, 358, 780, 393], text: "" },
+          { row: 0, col: 2, cell_coords: [551, 40, 866, 75], abs_coords: [784, 358, 1099, 393], text: "Satış Rakamları (₺)", colspan: 2 },
+          { row: 0, col: 3, cell_coords: [866, 40, 1132, 75], abs_coords: [1099, 358, 1365, 393], text: "Durum" },
+          { row: 1, col: 0, cell_coords: [18, 76, 255, 113], abs_coords: [251, 394, 488, 431], text: "" },
+          { row: 1, col: 1, cell_coords: [252, 76, 547, 113], abs_coords: [485, 394, 780, 431], text: "Ocak - Mart" },
+          { row: 1, col: 2, cell_coords: [551, 76, 866, 113], abs_coords: [784, 394, 1099, 431], text: "Nisan - Haziran" },
+          { row: 1, col: 3, cell_coords: [866, 76, 1132, 113], abs_coords: [1099, 394, 1365, 431], text: "" },
+          { row: 2, col: 0, cell_coords: [18, 115, 255, 150], abs_coords: [251, 433, 488, 468], text: "Marmara" },
+          { row: 2, col: 1, cell_coords: [252, 115, 547, 150], abs_coords: [485, 433, 780, 468], text: "500.000" },
+          { row: 2, col: 2, cell_coords: [551, 115, 866, 150], abs_coords: [784, 433, 1099, 468], text: "650.000" },
+          { row: 2, col: 3, cell_coords: [866, 115, 1132, 150], abs_coords: [1099, 433, 1365, 468], text: "Başarılı" },
+          { row: 3, col: 0, cell_coords: [18, 152, 255, 188], abs_coords: [251, 470, 488, 506], text: "İç Anadolu" },
+          { row: 3, col: 1, cell_coords: [252, 152, 547, 188], abs_coords: [485, 470, 780, 506], text: "300.000" },
+          { row: 3, col: 2, cell_coords: [551, 152, 866, 188], abs_coords: [784, 470, 1099, 506], text: "320.000" },
+          { row: 3, col: 3, cell_coords: [866, 152, 1132, 188], abs_coords: [1099, 470, 1365, 506], text: "Beklentinin Altında" }
+        ],
+        words: [
+          { word: "2024 Yılı Yarıyıl Satış ve Hedef Gerçekleşme Raporu", bbox: [497, 321, 1173, 357] }
+        ]
+      }
+    },
+    {
       id: 'sample-formula',
       name: 'KDV & Fatura Hesap Cetveli',
       type: 'E_FORMULA',

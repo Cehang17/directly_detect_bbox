@@ -40,6 +40,13 @@
           <span id="tables-badge" class="table-count-badge hidden">0</span>
         </button>
 
+        <button type="button" id="top-inspector-btn" class="topbar-btn"
+          title="Yüklenen PDF ve JSON tablolarını X-Ray ile görsel olarak incele"
+          style="background:linear-gradient(135deg,rgba(2,132,199,0.25),rgba(129,140,248,0.25)); border-color:#38bdf8; color:#38bdf8;">
+          <i class="fa-solid fa-microscope"></i> <span>Tablo X-Ray Denetleyici</span>
+          <span id="tables-inspector-badge" class="table-count-badge hidden">0</span>
+        </button>
+
         <a href="table-tester.html" target="_blank" class="topbar-btn"
           title="Yalnızca Tabloları ve Okuma Sıralarını Test Et"
           style="background:rgba(2,132,199,0.18); border-color:#38bdf8; color:#38bdf8; text-decoration:none;">
@@ -241,9 +248,15 @@
 
           <button id="save-table-type-btn" class="sidebar-btn full-btn action-save-btn" style="
             background:linear-gradient(135deg,#0284c7,#0369a1);
-            border-color:#38bdf8; margin-bottom:0;
+            border-color:#38bdf8; margin-bottom:6px;
           ">
             <i class="fa-solid fa-arrows-rotate"></i> Tipi Uygula &amp; Okuma Sırasını Güncelle
+          </button>
+
+          <button id="sidebar-inspect-table-btn" class="sidebar-btn full-btn" style="
+            background:rgba(56,189,248,0.15); border-color:#38bdf8; color:#38bdf8; margin-bottom:0;
+          " title="Bu tablonun hücrelerini, hiyerarşisini ve okuma yörüngesini X-Ray ile incele">
+            <i class="fa-solid fa-microscope"></i> Tabloyu X-Ray'de İncele
           </button>
         </div>
 
@@ -283,13 +296,14 @@
   <div id="toast-container" class="toast-container"></div>
 
   <!-- Application Scripts -->
-  <script src="js/table-classifier.js?v=195.0"></script>
-  <script src="js/sentence-splitter.js?v=195.0"></script>
-  <script src="js/bbox-parser.js?v=195.0"></script>
-  <script src="js/tts-reader.js?v=195.0"></script>
-  <script src="js/overlay.js?v=195.0"></script>
-  <script src="js/pdf-viewer.js?v=195.0"></script>
-  <script src="js/app.js?v=195.0"></script>
+  <script src="js/table-classifier.js?v=200.0"></script>
+  <script src="js/sentence-splitter.js?v=200.0"></script>
+  <script src="js/bbox-parser.js?v=200.0"></script>
+  <script src="js/table-inspector.js?v=200.0"></script>
+  <script src="js/tts-reader.js?v=200.0"></script>
+  <script src="js/overlay.js?v=200.0"></script>
+  <script src="js/pdf-viewer.js?v=200.0"></script>
+  <script src="js/app.js?v=200.0"></script>
 </body>
 
 </html>

@@ -114,6 +114,11 @@ function initApp() {
     saveTextBtn: document.getElementById('save-text-btn'),
     sidebarSpeakBtn: document.getElementById('sidebar-speak-btn'),
 
+    // Table Inspector & X-Ray Controls
+    topInspectorBtn: document.getElementById('top-inspector-btn'),
+    tablesInspectorBadge: document.getElementById('tables-inspector-badge'),
+    sidebarInspectTableBtn: document.getElementById('sidebar-inspect-table-btn'),
+
     // Toast
     toastContainer: document.getElementById('toast-container')
   };
@@ -358,6 +363,19 @@ function initApp() {
       } else {
         elements.tablesBadge.classList.add('hidden');
       }
+    }
+
+    if (elements.tablesInspectorBadge) {
+      if (counts.ALL > 0) {
+        elements.tablesInspectorBadge.textContent = counts.ALL;
+        elements.tablesInspectorBadge.classList.remove('hidden');
+      } else {
+        elements.tablesInspectorBadge.classList.add('hidden');
+      }
+    }
+
+    if (window.tableInspector) {
+      window.tableInspector.setTables(state.detectedTables, state.parsedBBoxes, state.activePage);
     }
   }
 
@@ -1283,6 +1301,31 @@ function initApp() {
     elements.sidebarTableTypeSelect.addEventListener('change', () => {
       const selectedType = elements.sidebarTableTypeSelect.value;
       updateSelectedTableType(selectedType);
+    });
+  }
+
+  // Table Inspector Modal Open Handlers
+  if (elements.topInspectorBtn) {
+    elements.topInspectorBtn.addEventListener('click', () => {
+      if (!window.tableInspector) return;
+      window.tableInspector.setTables(state.detectedTables, state.parsedBBoxes, state.activePage);
+      window.tableInspector.open(0);
+    });
+  }
+
+  if (elements.sidebarInspectTableBtn) {
+    elements.sidebarInspectTableBtn.addEventListener('click', () => {
+      if (!window.tableInspector) return;
+      window.tableInspector.setTables(state.detectedTables, state.parsedBBoxes, state.activePage);
+
+      // Focus on the table of currently selected cell if applicable
+      let targetIdx = 0;
+      if (state.selectedBBox && (state.selectedBBox.is_table_cell || state.selectedBBox.table_id)) {
+        const tId = state.selectedBBox.table_id;
+        const found = state.detectedTables.findIndex(t => t.id === tId || (t.cells && t.cells.some(c => String(c.id) === String(state.selectedBBox.id))));
+        if (found >= 0) targetIdx = found;
+      }
+      window.tableInspector.open(targetIdx);
     });
   }
 
