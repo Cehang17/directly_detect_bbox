@@ -1463,19 +1463,63 @@ class TableClassifier {
       : (typeof require !== 'undefined' ? (() => { try { return require('./sentence-splitter.js'); } catch (e) { return null; } })() : null);
 
     // _sourceLines: aynı (row,col) içindeki birleştirilmiş OCR satırları
-    // Bunları NLP bbox eşlemesi için kullan
     const sourceLines = Array.isArray(cell._sourceLines) && cell._sourceLines.length > 1
       ? cell._sourceLines
       : null;
 
-    // CASE 1: _sourceLines mevcut → doğrudan satırları lineIndices olarak kullan
-    if (sourceLines && Splitter && typeof Splitter.splitParagraphIntoSentences === 'function') {
-      const lineDefs = sourceLines
-        .map(l => {
-          const box = l.rawCoords || l.bbox || [0, 0, 0, 0];
-          return { text: (l.text || '').trim(), bbox: box };
-        })
-        .filter(l => l.text.length > 0);
+    // Gather all raw text fragments from sourceLines or cell.words
+    let rawFragments = [];
+    if (sourceLines && sourceLines.length > 0) {
+      rawFragments = sourceLines.map(l => ({
+        text: (l.text || '').trim(),
+        bbox: l.rawCoords || l.bbox || [0, 0, 0, 0]
+      })).filter(l => l.text.length > 0);
+    } else if (Array.isArray(cell.words) && cell.words.length > 0) {
+      rawFragments = cell.words.map(w => ({
+        text: (w.word || w.text || '').trim(),
+        bbox: w.bbox || w.coords || [0, 0, 0, 0]
+      })).filter(w => w.text.length > 0);
+    }
+
+    if (rawFragments.length > 1 && Splitter && typeof Splitter.splitParagraphIntoSentences === 'function') {
+      // UNIVERSAL INTRA-LINE STITCHER:
+      // Merge all horizontal fragments that share the same vertical baseline into a single continuous line
+      const lineGroups = [];
+      rawFragments.forEach(f => {
+        const box = f.bbox;
+        const midY = (box[1] + box[3]) / 2;
+        const h = Math.max(box[3] - box[1], 8);
+
+        const match = lineGroups.find(lg => {
+          const vOverlap = Math.max(0, Math.min(lg.y1, box[3]) - Math.max(lg.y0, box[1]));
+          const minH = Math.min(lg.y1 - lg.y0, h);
+          return (minH > 0 && vOverlap / minH > 0.35) || Math.abs(lg.midY - midY) <= Math.max(8, h * 0.45);
+        });
+
+        if (match) {
+          match.fragments.push(f);
+          match.y0 = Math.min(match.y0, box[1]);
+          match.y1 = Math.max(match.y1, box[3]);
+          match.midY = (match.y0 + match.y1) / 2;
+        } else {
+          lineGroups.push({ y0: box[1], y1: box[3], midY, fragments: [f] });
+        }
+      });
+
+      lineGroups.sort((a, b) => a.y0 - b.y0);
+
+      const lineDefs = lineGroups.map(lg => {
+        lg.fragments.sort((a, b) => a.bbox[0] - b.bbox[0]);
+        const lineText = lg.fragments.map(f => f.text).join(' ').trim();
+        const allX0 = lg.fragments.map(f => f.bbox[0]);
+        const allY0 = lg.fragments.map(f => f.bbox[1]);
+        const allX1 = lg.fragments.map(f => f.bbox[2]);
+        const allY1 = lg.fragments.map(f => f.bbox[3]);
+        return {
+          text: lineText,
+          bbox: [Math.min(...allX0), Math.min(...allY0), Math.max(...allX1), Math.max(...allY1)]
+        };
+      }).filter(l => l.text.length > 0);
 
       if (lineDefs.length > 0) {
         const unitedText = lineDefs.map(l => l.text).join(' ');
@@ -1535,117 +1579,6 @@ class TableClassifier {
           });
           if (resultItems.length > 0) return resultItems;
         }
-      }
-    }
-
-    // CASE 2: words mevcut → word bazlı satır gruplama (eski mantık)
-    if (Array.isArray(cell.words) && cell.words.length > 0 && Splitter && typeof Splitter.splitParagraphIntoSentences === 'function') {
-      const lineMap = new Map();
-      cell.words.forEach(w => {
-        const wb = w.bbox || w.coords || [0, 0, 0, 0];
-        const midY = Math.round((wb[1] + wb[3]) / 2);
-        let matchedLine = null;
-        for (const [lineY, lineWords] of lineMap.entries()) {
-          if (Math.abs(lineY - midY) <= 6) {
-            matchedLine = lineWords;
-            break;
-          }
-        }
-        if (matchedLine) {
-          matchedLine.push(w);
-        } else {
-          lineMap.set(midY, [w]);
-        }
-      });
-
-      const lineList = Array.from(lineMap.values());
-      if (lineList.length > 1) {
-        const lineDefs = lineList.map(lWords => {
-          lWords.sort((a, b) => (a.bbox?.[0] || 0) - (b.bbox?.[0] || 0));
-          const lineText = lWords.map(w => w.word || w.text || '').join(' ').trim();
-          const allX0 = lWords.map(w => (w.bbox || w.coords)[0]);
-          const allY0 = lWords.map(w => (w.bbox || w.coords)[1]);
-          const allX1 = lWords.map(w => (w.bbox || w.coords)[2]);
-          const allY1 = lWords.map(w => (w.bbox || w.coords)[3]);
-          return {
-            text: lineText,
-            bbox: [Math.min(...allX0), Math.min(...allY0), Math.max(...allX1), Math.max(...allY1)]
-          };
-        }).filter(l => l.text.length > 0);
-
-        lineDefs.sort((a, b) => a.bbox[1] - b.bbox[1]);
-        const unitedText = lineDefs.map(l => l.text).join(' ');
-        const sentences = Splitter.splitParagraphIntoSentences(unitedText);
-
-        const lineIndices = [];
-        let searchIdx = 0;
-        for (const l of lineDefs) {
-          let idx = unitedText.indexOf(l.text, searchIdx);
-          if (idx === -1) idx = unitedText.indexOf(l.text);
-          if (idx === -1) continue;
-          const end = idx + l.text.length;
-          lineIndices.push({ text: l.text, start: idx, end, bbox: l.bbox });
-          searchIdx = end;
-        }
-
-        Splitter.mapSentencesToLines(sentences, lineIndices);
-        sentences.forEach(s => Splitter.calculateSentenceBBoxes(s));
-        Splitter.fixTinyLeadingBBoxes(sentences);
-        const cleaned = Splitter.cleanSentences(sentences);
-
-        const items = [];
-        let currSid = startSentenceId;
-        cleaned.forEach(s => {
-          const sNum = currSid++;
-          const sBoxes = s.bboxes || [];
-          const sTexts = s.bbox_texts || [];
-          if (sBoxes.length === 0) {
-            items.push({
-              id: `bbox-p${pageNum}-t${tableIndex}-c${tOrderId}-${sNum}-${Math.random().toString(36).substr(2, 6)}`,
-              page: pageNum,
-              sentence_id: sNum,
-              id_display: sNum,
-              table_id: tableId,
-              table_type: tableType,
-              table_order_id: tOrderId,
-              table_order_label: `T${tableIndex}.${tOrderId}`,
-              text: s.text.trim(),
-              fullSentenceText: s.text.trim(),
-              rawCoords: cellBox,
-              bbox: cellBox,
-              rawBox: cellBox,
-              coordType: 'abs_points',
-              category: 'Table Cell',
-              confidence: cell.confidence || 0.98,
-              row: cell.row,
-              col: cell.col
-            });
-          } else {
-            sBoxes.forEach((bb, bIdx) => {
-              items.push({
-                id: `bbox-p${pageNum}-t${tableIndex}-c${tOrderId}-${sNum}-${bIdx + 1}-${Math.random().toString(36).substr(2, 6)}`,
-                page: pageNum,
-                sentence_id: sNum,
-                id_display: sNum,
-                table_id: tableId,
-                table_type: tableType,
-                table_order_id: tOrderId,
-                table_order_label: `T${tableIndex}.${tOrderId}`,
-                text: (sTexts[bIdx] || s.text).trim(),
-                fullSentenceText: s.text.trim(),
-                rawCoords: [Math.round(bb[0] * 10) / 10, Math.round(bb[1] * 10) / 10, Math.round(bb[2] * 10) / 10, Math.round(bb[3] * 10) / 10],
-                bbox: [Math.round(bb[0] * 10) / 10, Math.round(bb[1] * 10) / 10, Math.round(bb[2] * 10) / 10, Math.round(bb[3] * 10) / 10],
-                rawBox: [Math.round(bb[0] * 10) / 10, Math.round(bb[1] * 10) / 10, Math.round(bb[2] * 10) / 10, Math.round(bb[3] * 10) / 10],
-                coordType: 'abs_points',
-                category: 'Table Cell',
-                confidence: cell.confidence || 0.98,
-                row: cell.row,
-                col: cell.col
-              });
-            });
-          }
-        });
-        if (items.length > 0) return items;
       }
     }
 
